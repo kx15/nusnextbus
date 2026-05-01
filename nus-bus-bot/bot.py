@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -12,7 +12,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from api import BusStopArrivals, get_all_arrivals, get_arrivals
+from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from stops import STOPS, find_stop
 
 load_dotenv()
@@ -73,13 +73,42 @@ def stops_keyboard(page: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    header = f"🚌 *All Bus Arrivals* — _{timestamp}_\n\n"
+    lines = []
+    for arrivals in results:
+        if arrivals is None:
+            continue
+        active = [t for t in arrivals.timings if t.arrival_time not in ("-", "")]
+        if not active:
+            continue
+        buses = "  ".join(
+            f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in arrivals.timings
+        )
+        lines.append(f"`{arrivals.stop_name}` — {arrivals.stop_caption}\n{buses}")
+    pages: list[str] = []
+    current = header
+    for line in lines:
+        block = line + "\n\n"
+        if len(current) + len(block) > 4000:
+            pages.append(current.rstrip())
+            current = block
+        else:
+            current += block
+    if current.strip():
+        pages.append(current.rstrip())
+    return pages or ["No buses currently operating at any stop."]
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "*NUS NextBus Bot*\n\n"
         "Get real‑time shuttle bus arrival times.\n\n"
         "Commands:\n"
-        "• /stops — browse all bus stops\n"
+        "• /all — All bus arrivals\n"
         "• /arrivals `<stop>` — get arrivals (e.g. `/arrivals CLB`)\n"
+        "• /stops — browse stops with inline buttons\n"
         "• /help — show this message",
         parse_mode="Markdown",
     )
@@ -96,60 +125,6 @@ async def stops_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await update.message.reply_text(
-            "Select a bus stop:",
-            reply_markup=stops_keyboard(0),
-        )
-        return
-
-    query = " ".join(context.args)
-    stop = find_stop(query)
-    if not stop:
-        await update.message.reply_text(
-            f"Stop '{query}' not found. Use /stops to browse available stops."
-        )
-        return
-
-    try:
-        arrivals = get_arrivals(stop["name"])
-        await update.message.reply_text(format_arrivals(arrivals), parse_mode="Markdown")
-    except Exception:
-        logger.exception("Failed to fetch arrivals for %s", stop["name"])
-        await update.message.reply_text("Failed to fetch arrivals. Please try again shortly.")
-
-
-def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    header = f"🚌 *All Bus Arrivals* — _{timestamp}_\n\n"
-
-    lines = []
-    for arrivals in results:
-        if arrivals is None:
-            continue
-        active = [t for t in arrivals.timings if t.arrival_time not in ("-", "")]
-        if not active:
-            continue
-        buses = "  ".join(
-            f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in arrivals.timings
-        )
-        lines.append(f"`{arrivals.stop_name}` — {arrivals.stop_caption}\n{buses}")
-
-    pages: list[str] = []
-    current = header
-    for line in lines:
-        block = line + "\n\n"
-        if len(current) + len(block) > 4000:
-            pages.append(current.rstrip())
-            current = block
-        else:
-            current += block
-    if current.strip():
-        pages.append(current.rstrip())
-    return pages or ["No buses currently operating at any stop."]
-
-
 async def all_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = await update.message.reply_text("Fetching all stops… ⏳")
     try:
@@ -164,10 +139,31 @@ async def all_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await msg.edit_text("Failed to fetch arrivals. Please try again shortly.")
 
 
+async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text(
+            "Select a bus stop:",
+            reply_markup=stops_keyboard(0),
+        )
+        return
+    query = " ".join(context.args)
+    stop = find_stop(query)
+    if not stop:
+        await update.message.reply_text(
+            f"Stop '{query}' not found. Use /stops to browse available stops."
+        )
+        return
+    try:
+        arrivals = await get_arrivals_async(stop["name"])
+        await update.message.reply_text(format_arrivals(arrivals), parse_mode="Markdown")
+    except Exception:
+        logger.exception("Failed to fetch arrivals for %s", stop["name"])
+        await update.message.reply_text("Failed to fetch arrivals. Please try again shortly.")
+
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
     data = query.data
     if data.startswith("page:"):
         page = int(data.split(":", 1)[1])
@@ -182,7 +178,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("Stop not found.")
             return
         try:
-            arrivals = get_arrivals(stop["name"])
+            arrivals = await get_arrivals_async(stop["name"])
             back_btn = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")]]
             )
@@ -196,19 +192,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("Failed to fetch arrivals. Please try again.")
 
 
+async def post_init(app: Application) -> None:
+    await app.bot.set_my_commands([
+        BotCommand("all",      "All bus arrivals"),
+        BotCommand("arrivals", "Select stop to get arrival time"),
+        BotCommand("stops",    "Browse stops with inline buttons"),
+        BotCommand("help",     "Show this message"),
+    ])
+
+
 def main() -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
-    app = Application.builder().token(token).build()
+    webhook_url = os.environ["WEBHOOK_URL"].rstrip("/")
+    port = int(os.environ.get("PORT", 8080))
+
+    app = Application.builder().token(token).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("all", all_command))
     app.add_handler(CommandHandler("stops", stops_command))
     app.add_handler(CommandHandler("arrivals", arrivals_command))
-    app.add_handler(CommandHandler("all", all_command))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    logger.info("Starting bot...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Starting bot with webhook on port %d...", port)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=webhook_url,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
