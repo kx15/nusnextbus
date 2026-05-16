@@ -188,7 +188,10 @@ async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(
             format_arrivals(arrivals),
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[_fav_button(user_id, stop["name"])]]),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{stop['name']}"),
+                _fav_button(user_id, stop["name"]),
+            ]]),
         )
     except Exception:
         logger.exception("Failed to fetch arrivals for %s", stop["name"])
@@ -216,7 +219,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             arrivals = await get_arrivals_async(stop["name"])
             user_id = query.from_user.id
             keyboard = InlineKeyboardMarkup([
-                [_fav_button(user_id, stop_name)],
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{stop_name}"),
+                    _fav_button(user_id, stop_name),
+                ],
                 [InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")],
             ])
             await query.edit_message_text(
@@ -227,13 +233,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             logger.exception("Failed to fetch arrivals for %s", stop_name)
             await query.edit_message_text("Failed to fetch arrivals. Please try again.")
+    elif data.startswith("refresh:"):
+        stop_name = data.split(":", 1)[1]
+        stop = find_stop(stop_name)
+        await query.answer()
+        if not stop:
+            return
+        try:
+            arrivals = await get_arrivals_async(stop["name"])
+            user_id = query.from_user.id
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{stop_name}"),
+                    _fav_button(user_id, stop_name),
+                ],
+                [InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")],
+            ])
+            await query.edit_message_text(
+                format_arrivals(arrivals),
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+        except Exception:
+            logger.exception("Failed to refresh arrivals for %s", stop_name)
     elif data.startswith("fav:"):
         stop_name = data.split(":", 1)[1]
         user_id = query.from_user.id
         added = toggle_favourite(user_id, stop_name)
         await query.answer("Added to favourites! ⭐" if added else "Removed from favourites.")
         keyboard = InlineKeyboardMarkup([
-            [_fav_button(user_id, stop_name)],
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{stop_name}"),
+                _fav_button(user_id, stop_name),
+            ],
             [InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")],
         ])
         await query.edit_message_reply_markup(reply_markup=keyboard)
