@@ -38,7 +38,7 @@ def _fmt_time(mins: str) -> str:
 def format_arrivals(arrivals: BusStopArrivals) -> str:
     lines = [
         f"*{arrivals.stop_name} — {arrivals.stop_caption}*",
-        f"_Updated: {arrivals.last_updated}_",
+        f"⏱ {datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M')}",
         "",
     ]
     if not arrivals.timings:
@@ -80,8 +80,8 @@ def stops_keyboard(page: int) -> InlineKeyboardMarkup:
 
 
 def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
-    timestamp = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
-    header = f"🚌 *All Bus Arrivals* — _{timestamp}_\n\n"
+    timestamp = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M")
+    header = f"🚌 *All Bus Arrivals* ⏱ {timestamp}\n\n"
     lines = []
     for arrivals in results:
         if arrivals is None:
