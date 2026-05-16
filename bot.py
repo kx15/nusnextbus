@@ -114,7 +114,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Commands:\n"
         "• /all — All bus arrivals\n"
         "• /arrivals `<stop>` — get arrivals (e.g. `/arrivals CLB`)\n"
-        "• /stops — browse stops with inline buttons\n"
         "• /fav — your favourite stops\n"
         "• /help — show this message",
         parse_mode="Markdown",
@@ -244,7 +243,6 @@ async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
-        BotCommand("stops",    "Browse stops with inline buttons"),
         BotCommand("fav",      "Your favourite stops"),
         BotCommand("help",     "Show this message"),
     ])
