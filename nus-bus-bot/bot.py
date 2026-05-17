@@ -544,18 +544,33 @@ async def _route_offcampus_to_campus(
         if best is None or (common and not best["common"]):
             best = {"gateway": gateway, "transit": transit, "arrivals": arrivals, "common": common}
 
+    maps_url = (
+        f"https://www.google.com/maps/dir/?api=1"
+        f"&origin={origin_loc[0]},{origin_loc[1]}"
+        f"&destination={dest_lat},{dest_lng}&travelmode=transit"
+    )
+
     if not best:
         directions = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
         _append_directions_block(lines, directions)
         return
 
-    # ① Public transport to gateway
     transit = best["transit"]
+    transit_steps = transit.get("steps", [])
+
+    # ① Public transport to gateway
     lines.append(f"*① Public transport → {best['gateway']['caption']}*")
     if transit.get("duration"):
         icon = "🚇" if transit.get("mode") == "transit" else "🚶"
         lines.append(f"{icon} {transit['distance']} · {transit['duration']}")
-    _fmt_steps(lines, transit.get("steps", []))
+
+    if transit_steps:
+        _fmt_steps(lines, transit_steps)
+    else:
+        # Steps missing — fall back to transit directions straight to final destination
+        lines.append("_(see Google Maps for step-by-step public transport)_")
+        lines.append(f"[open in Google Maps]({maps_url})")
+        # Still show NUS shuttle and walk below
     lines.append("")
 
     # ② NUS shuttle to destination stop
@@ -577,12 +592,8 @@ async def _route_offcampus_to_campus(
         _fmt_steps(lines, walk.get("steps", []))
         lines.append("")
 
-    maps_url = (
-        f"https://www.google.com/maps/dir/?api=1"
-        f"&origin={origin_loc[0]},{origin_loc[1]}"
-        f"&destination={dest_lat},{dest_lng}&travelmode=transit"
-    )
-    lines.append(f"[open in Google Maps]({maps_url})")
+    if transit_steps:
+        lines.append(f"[open in Google Maps]({maps_url})")
 
 
 async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
