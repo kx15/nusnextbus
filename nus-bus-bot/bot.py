@@ -515,9 +515,17 @@ async def _route_offcampus_to_campus(
 ) -> None:
     """Off-campus → on-campus: public transit to gateway + NUS shuttle + walk."""
     gateways = [(find_stop(name), addr) for name, addr in _GATEWAYS if find_stop(name)]
+    logger.info("off-campus routing: origin=%s dest_stop=%s gateways=%d",
+                origin_loc, dest_stop["name"], len(gateways))
 
+    maps_url = (
+        f"https://www.google.com/maps/dir/?api=1"
+        f"&origin={origin_loc[0]},{origin_loc[1]}"
+        f"&destination={dest_lat},{dest_lng}&travelmode=transit"
+    )
+
+    # Fetch all data in parallel
     tasks = (
-        # Use station address strings — far more reliable for transit routing than GPS
         [get_transit_to_stop(origin_loc[0], origin_loc[1], addr, g["lat"], g["lng"])
          for g, addr in gateways]
         + [get_arrivals_async(g["name"]) for g, _ in gateways]
@@ -533,11 +541,18 @@ async def _route_offcampus_to_campus(
     dest_arrivals    = results[2 * n]
     walk             = results[2 * n + 1] if not dest_is_exact_stop else None
 
+    for i, (tr, (gw, addr)) in enumerate(zip(transit_results, gateways)):
+        if isinstance(tr, Exception):
+            logger.error("transit to %s failed: %s", addr, tr)
+        else:
+            logger.info("transit to %s: duration=%s steps=%d",
+                        addr, tr.get("duration"), len(tr.get("steps", [])))
+
     dest_names: set = set()
     if not isinstance(dest_arrivals, Exception):
         dest_names = {t.name for t in dest_arrivals.timings if not t.name.strip().isdigit()}
 
-    # Pick gateway: prefer one with common buses to destination
+    # Pick gateway: prefer one with common NUS buses to destination
     best: dict | None = None
     for (gateway, _), transit, arrivals in zip(gateways, transit_results, gateway_arrivals):
         if isinstance(transit, Exception) or not transit.get("duration"):
@@ -549,25 +564,27 @@ async def _route_offcampus_to_campus(
         if best is None or (common and not best["common"]):
             best = {"gateway": gateway, "transit": transit, "arrivals": arrivals, "common": common}
 
-    maps_url = (
-        f"https://www.google.com/maps/dir/?api=1"
-        f"&origin={origin_loc[0]},{origin_loc[1]}"
-        f"&destination={dest_lat},{dest_lng}&travelmode=transit"
-    )
+    logger.info("best gateway: %s", best["gateway"]["name"] if best else "none")
 
     if not best:
+        logger.warning("no gateway found, falling back to direct directions")
         directions = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
         _append_directions_block(lines, directions)
         return
 
     transit = best["transit"]
+    transit_steps = transit.get("steps", [])
+    logger.info("transit steps count: %d", len(transit_steps))
 
     # ① Public transport to gateway
     lines.append(f"*① Public transport → {best['gateway']['caption']}*")
     if transit.get("duration"):
         icon = "🚇" if transit.get("mode") == "transit" else "🚶"
         lines.append(f"{icon} {transit['distance']} · {transit['duration']}")
-    _fmt_steps(lines, transit.get("steps", []))
+    if transit_steps:
+        _fmt_steps(lines, transit_steps)
+    else:
+        lines.append("_(tap Google Maps below for step-by-step directions)_")
     lines.append("")
 
     # ② NUS shuttle to destination stop
@@ -580,7 +597,7 @@ async def _route_offcampus_to_campus(
                     f" | Next: {_fmt_time(t.next_arrival_time)}"
                 )
     else:
-        lines.append("no direct NUS bus from this stop — check /arrivals for options")
+        lines.append("no direct NUS bus — check /arrivals for options")
     lines.append("")
 
     # ③ Walk to final destination
