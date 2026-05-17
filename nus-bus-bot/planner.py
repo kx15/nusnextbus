@@ -24,7 +24,8 @@ def haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 _GMAPS_DIRECTIONS = "https://maps.googleapis.com/maps/api/directions/json"
-_GMAPS_GEOCODE    = "https://maps.googleapis.com/maps/api/geocode/json"
+_GMAPS_GEOCODE       = "https://maps.googleapis.com/maps/api/geocode/json"
+_GMAPS_PLACES_SEARCH = "https://maps.googleapis.com/maps/api/place/textsearch/json"
 
 # Singapore bounding box for geocoding bias
 _SG_BOUNDS = "1.15,103.60|1.48,104.00"
@@ -139,11 +140,31 @@ async def _geocode_query(address: str, bounds: str, api_key: str) -> Optional[tu
         return None
 
 
+async def _places_search(query: str, api_key: str) -> Optional[tuple[float, float]]:
+    """Places Text Search — better than Geocoding for named POIs like LT28, COM1."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                _GMAPS_PLACES_SEARCH,
+                params={"query": query, "key": api_key},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return None
+        loc = data["results"][0]["geometry"]["location"]
+        return loc["lat"], loc["lng"]
+    except Exception:
+        return None
+
+
 async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     """
     Resolve a free-text location to (lat, lng).
-    Tries Singapore-wide first; if that fails, retries with 'NUS' appended
-    so campus codes like LT28, COM1, E1A resolve correctly.
+    1. Geocoding API — Singapore-wide (works for addresses, MRT stations, etc.)
+    2. Geocoding API — with 'NUS' appended + campus bounds bias
+    3. Places Text Search — best for named campus POIs like LT28, COM1, E1A
     """
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
@@ -153,5 +174,9 @@ async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     if result:
         return result
 
-    # Fallback: campus-specific names (e.g. LT28, E1, CELC)
-    return await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
+    result = await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
+    if result:
+        return result
+
+    # Last resort: Places Text Search handles abbreviations and POI names
+    return await _places_search(f"{query} NUS Singapore", api_key)
