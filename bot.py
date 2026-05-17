@@ -702,13 +702,29 @@ async def _route_on_campus(
     if not isinstance(dest_arrivals, Exception):
         dest_names = {t.name for t in dest_arrivals.timings if not t.name.strip().isdigit()}
 
-    # Only keep buses that travel origin→dest in the correct sequence.
-    # A bus serving both stops but in the wrong direction (dest comes before origin
-    # in the route) must be excluded — e.g. D1 at CLB→NUSS-OPP is reversed.
-    common = {
-        bus for bus in (origin_names & dest_names)
+    # Build live timing map from origin arrivals
+    live_timing: dict = {}
+    if not isinstance(origin_arrivals, Exception):
+        for t in origin_arrivals.timings:
+            if not t.name.strip().isdigit():
+                live_timing[t.name] = t
+
+    # All buses that serve origin→dest in correct direction, from route data.
+    # Using route data (not just live API) ensures we list every option even
+    # when a bus isn't actively arriving at the exact moment of the query.
+    route_buses = sorted(
+        bus for bus in _NUS_ROUTES
         if _nus_stops_between(bus, origin["name"], dest_stop["name"]) is not None
-    }
+    )
+
+    # Fallback: if no route data covers this pair, use live common buses
+    if not route_buses:
+        route_buses = sorted(
+            bus for bus in (origin_names & dest_names)
+            if _nus_stops_between(bus, origin["name"], dest_stop["name"]) is not None
+        )
+
+    common = set(route_buses)
 
     from urllib.parse import quote as _quote
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
@@ -726,12 +742,13 @@ async def _route_on_campus(
     )
 
     if common:
-        # Direct shuttle available
+        # Show all valid buses; use live timing where available, – otherwise
         lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*")
-        for t in origin_arrivals.timings:
-            if t.name in common:
-                lines.append("  " + _fmt_nus_shuttle(t.name, origin, dest_stop,
-                                                      t.arrival_time, t.next_arrival_time))
+        for bus_name in route_buses:
+            t = live_timing.get(bus_name)
+            arr  = t.arrival_time      if t else "-"
+            nxt  = t.next_arrival_time if t else "-"
+            lines.append("  " + _fmt_nus_shuttle(bus_name, origin, dest_stop, arr, nxt))
         lines.append("")
         if not dest_is_exact_stop:
             walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
