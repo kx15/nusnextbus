@@ -830,7 +830,7 @@ async def _route_on_campus(
         # Non-BT no-shuttle: walk or transit
         walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
         walk_m = walk.get("distance_m", 0) if (walk and not isinstance(walk, Exception)) else 0
-        if walk_m > 800:
+        if walk_m > 1500:
             lines.append("no direct NUS bus and it's quite far to walk 💀\n")
             lines.append("🚌 *take a public bus instead:*")
             lines.append(f"[public transport options in Google Maps]({transit_url})")
