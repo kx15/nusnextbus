@@ -708,17 +708,10 @@ async def _route_on_campus(
 
     from urllib.parse import quote as _quote
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
-    # For named buildings (not exact bus stops), use the label as destination text —
-    # raw coordinates reverse-geocode to unhelpful road names like "Opp NUSS".
-    # For exact bus stops, coordinates are more reliable than the stop caption.
-    if not dest_is_exact_stop and dest_label:
-        dest_for_maps = _quote(f"{dest_label} NUS Singapore")
-    else:
-        dest_for_maps = f"{dest_lat},{dest_lng}"
     maps_url = (
         f"https://www.google.com/maps/dir/?api=1"
         f"&origin={origin_addr}"
-        f"&destination={dest_for_maps}"
+        f"&destination={dest_lat},{dest_lng}"
         f"&travelmode={'transit' if is_bt else 'walking'}"
     )
 
