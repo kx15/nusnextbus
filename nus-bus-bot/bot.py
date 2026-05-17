@@ -432,6 +432,10 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if not isinstance(walking, Exception) and walking:
             if walking.get("duration"):
                 lines.append(f"🚶 *walking*: {walking['distance']} · {walking['duration']}")
+            for i, step in enumerate(walking.get("steps", []), 1):
+                lines.append(f"{i}. {step['instruction']} _({step['distance']})_")
+            if walking.get("steps"):
+                lines.append("")
             lines.append(f"[open in Google Maps]({walking['maps_url']})")
 
         await msg.edit_text(
