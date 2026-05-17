@@ -32,6 +32,7 @@ from stops import STOPS, find_stop, nearby_stops
 load_dotenv()
 
 PLAN_ORIGIN, PLAN_DEST = range(2)
+NEARBY_LOCATION = 2
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -149,19 +150,23 @@ def _location_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-async def nearby_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def nearby_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "where are you? 📍",
+        "where are you on campus? 📍",
         reply_markup=_location_keyboard(),
     )
+    return NEARBY_LOCATION
 
 
-async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def nearby_got_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     loc = update.message.location
     stops = nearby_stops(loc.latitude, loc.longitude, radius_m=500)
     if not stops:
-        await update.message.reply_text("no stops nearby... you might be off campus 💀")
-        return
+        await update.message.reply_text(
+            "no NUS bus stops within 500 m — are you on campus? 💀",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ConversationHandler.END
     buttons = [
         [InlineKeyboardButton(
             f"🚏 {s['name']} — {s['caption']} ({s['dist']} m)",
@@ -170,9 +175,15 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         for s in stops[:5]
     ]
     await update.message.reply_text(
-        f"found {len(stops)} stop(s) nearby 👇",
+        f"NUS stops near you 👇",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
+    return ConversationHandler.END
+
+
+async def nearby_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("cancelled 👍", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
 
 
 async def stops_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -338,13 +349,8 @@ async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["plan_origin"] = origin
     context.user_data["plan_origin_loc"] = (loc.latitude, loc.longitude)
 
-    if origin:
-        caption = f"📍 nearest NUS stop: *{origin['caption']}*\n\n"
-    else:
-        caption = "📍 got your location\n\n"
-
     await update.message.reply_text(
-        f"{caption}where are you going? 🏫\n_type a place or stop name_",
+        "📍 got your location\n\nwhere are you going? 🏫\n_type a place or stop name_",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -607,6 +613,14 @@ def main() -> None:
 
     app = Application.builder().token(token).post_init(post_init).build()
 
+    nearby_handler = ConversationHandler(
+        entry_points=[CommandHandler("nearby", nearby_start)],
+        states={
+            NEARBY_LOCATION: [MessageHandler(filters.LOCATION, nearby_got_location)],
+        },
+        fallbacks=[CommandHandler("cancel", nearby_cancel)],
+    )
+
     plan_handler = ConversationHandler(
         entry_points=[CommandHandler("plan", plan_start)],
         states={
@@ -624,10 +638,9 @@ def main() -> None:
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals", arrivals_command))
+    app.add_handler(nearby_handler)
     app.add_handler(plan_handler)
-    app.add_handler(CommandHandler("nearby",   nearby_command))
     app.add_handler(CommandHandler("fav",      fav_command))
-    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     logger.info("Starting bot (polling)...")
