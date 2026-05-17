@@ -31,7 +31,7 @@ def _fmt_time(mins: str) -> str:
     if not mins or mins == "-":
         return "–"
     if mins.lower() == "arr":
-        return "Arriving"
+        return "🚨 RUN"
     return f"{mins} min"
 
 
@@ -41,10 +41,11 @@ def format_arrivals(arrivals: BusStopArrivals) -> str:
         f"⏱ {datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M')}",
         "",
     ]
-    if not arrivals.timings:
-        lines.append("No buses currently operating.")
+    shuttles = [t for t in arrivals.timings if not t.name.strip().isdigit()]
+    if not shuttles:
+        lines.append("no buses rn... start walking bestie 💀")
     else:
-        for t in arrivals.timings:
+        for t in shuttles:
             lines.append(
                 f"\U0001f68c *{t.name}*: {_fmt_time(t.arrival_time)}"
                 f" | Next: {_fmt_time(t.next_arrival_time)}"
@@ -81,16 +82,16 @@ def stops_keyboard(page: int) -> InlineKeyboardMarkup:
 
 def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
     timestamp = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M")
-    header = f"🚌 *All Bus Arrivals* ⏱ {timestamp}\n\n"
+    header = f"🚌 *all buses rn* ⏱ {timestamp}\n\n"
     lines = []
     for arrivals in results:
         if arrivals is None:
             continue
-        active = [t for t in arrivals.timings if t.arrival_time not in ("-", "")]
+        active = [t for t in arrivals.timings if not t.name.strip().isdigit() and t.arrival_time not in ("-", "")]
         if not active:
             continue
         buses = "  ".join(
-            f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in arrivals.timings
+            f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in active
         )
         lines.append(f"`{arrivals.stop_name}` — {arrivals.stop_caption}\n{buses}")
     pages: list[str] = []
@@ -104,18 +105,17 @@ def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
             current += block
     if current.strip():
         pages.append(current.rstrip())
-    return pages or ["No buses currently operating at any stop."]
+    return pages or ["literally no buses anywhere rn 💀 skill issue"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "*NUS NextBus Bot*\n\n"
-        "Get real‑time shuttle bus arrival times.\n\n"
-        "Commands:\n"
-        "• /all — All bus arrivals\n"
-        "• /arrivals `<stop>` — get arrivals (e.g. `/arrivals CLB`)\n"
-        "• /fav — your favourite stops\n"
-        "• /help — show this message",
+        "🚌 *NUS NextBus*\n\n"
+        "no more standing at the stop praying fr\n\n"
+        "• /all — every bus on campus rn\n"
+        "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
+        "• /fav — your usual stops ⭐\n"
+        "• /help — what is this app",
         parse_mode="Markdown",
     )
 
@@ -136,7 +136,7 @@ async def fav_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     fav_stops = get_favourites(user_id)
     if not fav_stops:
         await update.message.reply_text(
-            "No favourite stops yet.\nBrowse /stops and tap ⭐ to add favourites."
+            "no usuals yet 😭\nuse /stops to add your go-to stops ⭐"
         )
         return
     buttons = [
@@ -148,14 +148,14 @@ async def fav_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if (s := find_stop(name))
     ]
     await update.message.reply_text(
-        "⭐ *Your Favourite Stops*\n\nSelect a stop:",
+        "⭐ *your usuals*\n\nwhich one?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
 
 async def all_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = await update.message.reply_text("Fetching all stops… ⏳")
+    msg = await update.message.reply_text("checking all stops one sec 👀")
     try:
         stop_names = [s["name"] for s in STOPS]
         results = await get_all_arrivals(stop_names)
@@ -165,7 +165,7 @@ async def all_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text(page, parse_mode="Markdown")
     except Exception:
         logger.exception("Failed to fetch all arrivals")
-        await msg.edit_text("Failed to fetch arrivals. Please try again shortly.")
+        await msg.edit_text("app said nah 💀 try again")
 
 
 async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -179,7 +179,7 @@ async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     stop = find_stop(query)
     if not stop:
         await update.message.reply_text(
-            f"Stop '{query}' not found. Use /stops to browse available stops."
+            f"'{query}' doesn't exist bestie. try /stops to browse 👇"
         )
         return
     try:
@@ -195,7 +195,7 @@ async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
     except Exception:
         logger.exception("Failed to fetch arrivals for %s", stop["name"])
-        await update.message.reply_text("Failed to fetch arrivals. Please try again shortly.")
+        await update.message.reply_text("couldn't load that stop rn 😭 try again")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -213,7 +213,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         stop_name = data.split(":", 1)[1]
         stop = find_stop(stop_name)
         if not stop:
-            await query.edit_message_text("Stop not found.")
+            await query.edit_message_text("that stop ghosted us 👻")
             return
         try:
             arrivals = await get_arrivals_async(stop["name"])
@@ -232,7 +232,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         except Exception:
             logger.exception("Failed to fetch arrivals for %s", stop_name)
-            await query.edit_message_text("Failed to fetch arrivals. Please try again.")
+            await query.edit_message_text("app said nah 💀 tap refresh and try again")
     elif data.startswith("refresh:"):
         stop_name = data.split(":", 1)[1]
         stop = find_stop(stop_name)
