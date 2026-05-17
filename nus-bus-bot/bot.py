@@ -621,8 +621,8 @@ def _append_directions_block(lines: list, directions) -> None:
 
 # Stops at Bukit Timah campus — only reachable via Bus P
 _BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "OTH"}
-# Best stops to board Bus P when origin doesn't have it directly
-_BUS_P_HUBS = ["UTOWN", "KR-MRT", "MUSEUM"]
+# Best stops to board Bus P — KR-MRT first (main interchange, most connections)
+_BUS_P_HUBS = ["KR-MRT", "UTOWN", "MUSEUM"]
 
 
 async def _route_on_campus(
