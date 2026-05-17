@@ -1,4 +1,5 @@
 import html as _html
+import math
 import os
 import re
 from typing import Optional
@@ -12,36 +13,52 @@ def _strip_html(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
+
+def haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6_371_000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 _GMAPS_DIRECTIONS = "https://maps.googleapis.com/maps/api/directions/json"
 _GMAPS_GEOCODE    = "https://maps.googleapis.com/maps/api/geocode/json"
 
-# NUS campus bounding box used to bias geocoding results
-_NUS_BOUNDS = "1.285,103.765|1.310,103.795"
+# Singapore bounding box for geocoding bias
+_SG_BOUNDS = "1.15,103.60|1.48,104.00"
+
+# Above this straight-line distance, switch from walking to transit mode
+_TRANSIT_THRESHOLD_M = 2000
 
 
-def _maps_link(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float) -> str:
+def _maps_link(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float, mode: str = "walking") -> str:
     return (
         f"https://www.google.com/maps/dir/?api=1"
         f"&origin={origin_lat},{origin_lng}"
         f"&destination={dest_lat},{dest_lng}"
-        f"&travelmode=walking"
+        f"&travelmode={mode}"
     )
 
 
-async def get_walking_directions(
+async def get_directions(
     origin_lat: float,
     origin_lng: float,
     dest_lat: float,
     dest_lng: float,
 ) -> dict:
     """
-    Returns a dict with maps_url always set, plus duration/distance strings
-    if the Directions API key is configured and the call succeeds.
+    Returns a directions dict. Uses walking for short trips (< 2 km),
+    transit for longer ones. maps_url and mode are always set.
     """
-    maps_url = _maps_link(origin_lat, origin_lng, dest_lat, dest_lng)
+    dist_m = haversine_m(origin_lat, origin_lng, dest_lat, dest_lng)
+    mode = "transit" if dist_m > _TRANSIT_THRESHOLD_M else "walking"
+    maps_url = _maps_link(origin_lat, origin_lng, dest_lat, dest_lng, mode)
+
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
-        return {"maps_url": maps_url, "duration": None, "distance": None}
+        return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
 
     try:
         async with httpx.AsyncClient() as client:
@@ -50,7 +67,7 @@ async def get_walking_directions(
                 params={
                     "origin": f"{origin_lat},{origin_lng}",
                     "destination": f"{dest_lat},{dest_lng}",
-                    "mode": "walking",
+                    "mode": mode,
                     "key": api_key,
                 },
                 timeout=10.0,
@@ -59,28 +76,53 @@ async def get_walking_directions(
             data = resp.json()
 
         if data.get("status") != "OK" or not data.get("routes"):
-            return {"maps_url": maps_url, "duration": None, "distance": None}
+            return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
 
         leg = data["routes"][0]["legs"][0]
-        steps = [
-            {
-                "instruction": _strip_html(s["html_instructions"]),
-                "distance": s["distance"]["text"],
-            }
-            for s in leg.get("steps", [])
-        ]
+
+        if mode == "walking":
+            steps = [
+                {
+                    "instruction": _strip_html(s["html_instructions"]),
+                    "distance": s["distance"]["text"],
+                }
+                for s in leg.get("steps", [])
+            ]
+        else:
+            # Transit: summarise each leg (walk / bus / MRT) rather than every turn
+            steps = []
+            for s in leg.get("steps", []):
+                travel = s.get("travel_mode", "")
+                if travel == "WALKING":
+                    steps.append({
+                        "instruction": f"🚶 Walk {s['distance']['text']}",
+                        "distance": s["duration"]["text"],
+                    })
+                elif travel == "TRANSIT":
+                    td   = s.get("transit_details", {})
+                    line = td.get("line", {})
+                    name = line.get("short_name") or line.get("name", "bus/MRT")
+                    dep  = td.get("departure_stop", {}).get("name", "")
+                    arr  = td.get("arrival_stop", {}).get("name", "")
+                    num_stops = td.get("num_stops", "?")
+                    steps.append({
+                        "instruction": f"🚌 Take {name}  {dep} → {arr}  ({num_stops} stops)",
+                        "distance": s["duration"]["text"],
+                    })
+
         return {
             "maps_url": maps_url,
+            "mode": mode,
             "duration": leg["duration"]["text"],
             "distance": leg["distance"]["text"],
             "steps": steps,
         }
     except Exception:
-        return {"maps_url": maps_url, "duration": None, "distance": None}
+        return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
 
 
-async def geocode_nus(query: str) -> Optional[tuple[float, float]]:
-    """Resolve a free-text NUS location to (lat, lng), biased to campus."""
+async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
+    """Resolve a free-text location to (lat, lng), biased to Singapore."""
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
         return None
@@ -89,8 +131,8 @@ async def geocode_nus(query: str) -> Optional[tuple[float, float]]:
             resp = await client.get(
                 _GMAPS_GEOCODE,
                 params={
-                    "address": f"{query} NUS Singapore",
-                    "bounds": _NUS_BOUNDS,
+                    "address": f"{query}, Singapore",
+                    "bounds": _SG_BOUNDS,
                     "key": api_key,
                 },
                 timeout=10.0,
