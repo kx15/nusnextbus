@@ -668,6 +668,7 @@ def main() -> None:
             NEARBY_LOCATION: [MessageHandler(filters.LOCATION, nearby_got_location)],
         },
         fallbacks=[CommandHandler("cancel", nearby_cancel)],
+        allow_reentry=True,
     )
 
     plan_handler = ConversationHandler(
@@ -680,6 +681,7 @@ def main() -> None:
             ],
         },
         fallbacks=[CommandHandler("cancel", plan_cancel)],
+        allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start",    start))
