@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
@@ -23,6 +24,7 @@ from telegram.ext import (
 
 from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
+from planner import get_walking_directions
 from stops import STOPS, find_stop, nearby_stops
 
 load_dotenv()
@@ -123,6 +125,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "no more standing at the stop praying fr\n\n"
         "• /all — every bus on campus rn\n"
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
+        "• /plan `<from> <to>` — route planner (e.g. `/plan CLB UTOWN`)\n"
         "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
         "• /help — what is this app",
@@ -315,11 +318,87 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_reply_markup(reply_markup=keyboard)
 
 
+async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /plan <from> <to>\ne.g. `/plan CLB UTOWN`",
+            parse_mode="Markdown",
+        )
+        return
+
+    args = context.args
+    origin_stop = dest_stop = None
+
+    # Try every split point so multi-word captions work (e.g. "college green")
+    for i in range(1, len(args)):
+        o = find_stop(" ".join(args[:i]))
+        d = find_stop(" ".join(args[i:]))
+        if o and d:
+            origin_stop, dest_stop = o, d
+            break
+
+    if not origin_stop or not dest_stop:
+        await update.message.reply_text(
+            "couldn't find those stops bestie 😭\nuse /stops to browse all stops"
+        )
+        return
+
+    if origin_stop["name"] == dest_stop["name"]:
+        await update.message.reply_text("you're already there lol 💀")
+        return
+
+    msg = await update.message.reply_text("planning your route one sec 👀")
+
+    try:
+        origin_arrivals, dest_arrivals, walking = await asyncio.gather(
+            get_arrivals_async(origin_stop["name"]),
+            get_arrivals_async(dest_stop["name"]),
+            get_walking_directions(
+                origin_stop["lat"], origin_stop["lng"],
+                dest_stop["lat"], dest_stop["lng"],
+            ),
+            return_exceptions=True,
+        )
+
+        lines = [f"🗺 *{origin_stop['caption']} → {dest_stop['caption']}*\n"]
+
+        if not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
+            origin_names = {t.name for t in origin_arrivals.timings if not t.name.strip().isdigit()}
+            dest_names   = {t.name for t in dest_arrivals.timings   if not t.name.strip().isdigit()}
+            common = origin_names & dest_names
+            if common:
+                lines.append("🚌 *buses serving both stops:*")
+                for t in origin_arrivals.timings:
+                    if t.name in common:
+                        lines.append(
+                            f"  *{t.name}*: {_fmt_time(t.arrival_time)}"
+                            f" | Next: {_fmt_time(t.next_arrival_time)}"
+                        )
+                lines.append("")
+            else:
+                lines.append("no direct bus found — might need a transfer or just walk 🚶\n")
+
+        if not isinstance(walking, Exception) and walking:
+            if walking.get("duration"):
+                lines.append(f"🚶 *walking*: {walking['distance']} · {walking['duration']}")
+            lines.append(f"[open in Google Maps]({walking['maps_url']})")
+
+        await msg.edit_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        logger.exception("Plan command failed")
+        await msg.edit_text("something broke 💀 try again")
+
+
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
         BotCommand("start",    "What is this app"),
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
+        BotCommand("plan",     "Plan a route between two stops"),
         BotCommand("nearby",   "Find stops near you 📍"),
         BotCommand("fav",      "Your favourite stops"),
         BotCommand("help",     "Show this message"),
@@ -337,6 +416,7 @@ def main() -> None:
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals", arrivals_command))
+    app.add_handler(CommandHandler("plan",     plan_command))
     app.add_handler(CommandHandler("nearby",   nearby_command))
     app.add_handler(CommandHandler("fav",      fav_command))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
