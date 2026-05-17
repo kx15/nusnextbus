@@ -658,13 +658,26 @@ async def _route_on_campus(
                 _fmt_steps(lines, walk.get("steps", []))
                 lines.append("")
     else:
-        lines.append("no direct NUS bus — walking instead 🚶\n")
-        # No shuttle: walk directly from the user's origin to the destination
+        # No shuttle: walk directly from origin to destination
         walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
-        if not isinstance(walk, Exception) and walk.get("duration"):
-            lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
-            _fmt_steps(lines, walk.get("steps", []))
-            lines.append("")
+        walk_m = walk.get("distance_m", 0) if (walk and not isinstance(walk, Exception)) else 0
+
+        if walk_m > 800:
+            # Too far to walk comfortably — suggest public bus via Google Maps transit
+            lines.append("no direct NUS bus and it's quite far to walk 💀\n")
+            lines.append("🚌 *take a public bus instead:*")
+            transit_url = (
+                f"https://www.google.com/maps/dir/?api=1"
+                f"&origin={origin_loc[0]},{origin_loc[1]}"
+                f"&destination={dest_lat},{dest_lng}&travelmode=transit"
+            )
+            lines.append(f"[public transport options in Google Maps]({transit_url})")
+        else:
+            lines.append("no direct NUS bus — walking instead 🚶\n")
+            if walk and not isinstance(walk, Exception) and walk.get("duration"):
+                lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
+                _fmt_steps(lines, walk.get("steps", []))
+                lines.append("")
 
     from urllib.parse import quote as _quote
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
