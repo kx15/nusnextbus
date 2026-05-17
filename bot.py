@@ -571,7 +571,7 @@ _NUS_ROUTES: dict[str, list[str]] = {
     "K":   ["KR-MRT", "LT13", "AS5", "YIH", "CLB", "LT13-OPP",
             "PGP", "PGPR", "KRB", "LT27", "S17", "MUSEUM",
             "UTOWN", "MUSEUM", "KV", "BG-MRT"],
-    "P":   ["KR-MRT", "UTOWN", "CG", "UTOWN", "BG-MRT", "KV",
+    "P":   ["KR-MRT", "UTOWN", "CG", "OTH", "BG-MRT", "KV",
             "MUSEUM", "UTOWN", "KR-MRT"],
     "R1":  ["CLB", "LT13-OPP", "BIZ2", "AS5", "YIH", "MUSEUM",
             "UTOWN", "MUSEUM", "YIH", "AS5", "BIZ2", "LT13-OPP", "CLB"],
@@ -635,9 +635,11 @@ async def _route_on_campus(
     dest_is_exact_stop: bool,
 ) -> None:
     """On-campus → on-campus: NUS shuttle + walk."""
-    is_bt = dest_stop["name"] in _BUKIT_TIMAH_STOPS
+    is_bt_dest   = dest_stop["name"] in _BUKIT_TIMAH_STOPS
+    is_bt_origin = origin["name"] in _BUKIT_TIMAH_STOPS
+    is_bt = is_bt_dest or is_bt_origin
 
-    # Fetch arrival data — include Bus P hub stops when heading to Bukit Timah
+    # Fetch arrival data — include Bus P hub stops for any BT-related route
     fetch_names = [origin["name"], dest_stop["name"]]
     if is_bt:
         fetch_names += _BUS_P_HUBS
@@ -694,8 +696,8 @@ async def _route_on_campus(
                 lines.append("")
         lines.append(f"[open in Google Maps]({maps_url})")
 
-    elif is_bt:
-        # Bukit Timah campus — try Bus P transfer via a hub stop
+    elif is_bt_origin and not is_bt_dest:
+        # Departing from Bukit Timah campus: Bus P to a hub, then shuttle to destination
         transfer_shown = False
         for hub_name in _BUS_P_HUBS:
             hub_stop = find_stop(hub_name)
@@ -703,11 +705,54 @@ async def _route_on_campus(
             if not hub_stop or isinstance(hub_arr, Exception):
                 continue
             hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
-            to_hub    = origin_names & hub_names   # buses that go from origin to hub
+            # Bus P must connect origin → hub, and hub must connect to destination
+            if "P" not in origin_names or "P" not in hub_names:
+                continue
+            to_dest = hub_names & dest_names  # buses from hub to destination
+            if not to_dest:
+                continue
+
+            lines.append(f"🚌 *From Bukit Timah campus via Bus P*\n")
+
+            # Step 1: Bus P from origin to hub
+            for t in origin_arrivals.timings:
+                if t.name == "P":
+                    lines.append(f"*① {origin['caption']} → {hub_stop['caption']} (Bus P)*")
+                    lines.append(f"  Take *P* — {_fmt_time(t.arrival_time)} | Next: {_fmt_time(t.next_arrival_time)}")
+                    break
+            lines.append("")
+
+            # Step 2: Connecting shuttle from hub to destination
+            step2 = sorted(to_dest)[0]
+            for t in hub_arr.timings:
+                if t.name == step2:
+                    lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']}*")
+                    lines.append("  " + _fmt_nus_shuttle(step2, hub_stop, dest_stop,
+                                                          t.arrival_time, t.next_arrival_time))
+                    break
+            lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+            transfer_shown = True
+            break
+
+        if not transfer_shown:
+            lines.append("Bus P not available right now 💀\n")
+            lines.append("🚇 *take public transport instead:*")
+            lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
+
+    elif is_bt_dest:
+        # Arriving at Bukit Timah campus — try Bus P transfer via a hub stop
+        transfer_shown = False
+        for hub_name in _BUS_P_HUBS:
+            hub_stop = find_stop(hub_name)
+            hub_arr  = hub_arrivals.get(hub_name)
+            if not hub_stop or isinstance(hub_arr, Exception):
+                continue
+            hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
+            to_hub    = origin_names & hub_names
             if not to_hub or "P" not in hub_names:
                 continue
 
-            # Show 2-step transfer
             lines.append(f"🚌 *Bus P to Bukit Timah campus*\n")
 
             step1 = sorted(to_hub)[0]
