@@ -460,6 +460,15 @@ async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng
         lines = [f"🗺 *{o_label} → {d_label}*\n"]
 
         if o_stop and d_stop:
+            # When destination is a building (not exact stop), check nearby stops
+            # and pick the one reachable in fewest bus stops — e.g. S15 is 68m from
+            # S17 but LT27 (87m) is reachable in 1 stop vs 8 stops from KR-MRT.
+            if not d_is_exact:
+                candidates = nearby_stops(d_lat, d_lng, radius_m=200)
+                if len(candidates) > 1:
+                    better = _best_dest_stop(o_stop["name"], candidates)
+                    if better:
+                        d_stop = better
             logger.info("routing: on-campus %s → %s", o_stop["name"], d_stop["name"])
             await _route_on_campus(lines, o_stop, origin_loc, d_stop, d_lat, d_lng, d_is_exact, d_label)
         elif d_stop:
@@ -631,6 +640,23 @@ def _nus_stops_between(bus: str, board: str, alight: str) -> Optional[int]:
             pass
         start = i + 1
     return best
+
+
+def _best_dest_stop(o_stop_name: str, candidates: list) -> Optional[dict]:
+    """
+    Given multiple nearby destination stop candidates, return the one reachable
+    in the fewest bus stops from o_stop_name.  Falls back to nearest if no route
+    data exists for any candidate.
+    """
+    best_stop  = candidates[0]
+    best_count = 10_000
+    for c in candidates:
+        for bus in _NUS_ROUTES:
+            n = _nus_stops_between(bus, o_stop_name, c["name"])
+            if n is not None and n < best_count:
+                best_count = n
+                best_stop  = c
+    return best_stop
 
 
 def _fmt_nus_shuttle(bus_name: str, board_stop: dict, alight_stop: dict,
