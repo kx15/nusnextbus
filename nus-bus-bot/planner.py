@@ -30,6 +30,10 @@ _GMAPS_PLACES_SEARCH = "https://maps.googleapis.com/maps/api/place/textsearch/js
 # Singapore bounding box for geocoding bias
 _SG_BOUNDS = "1.15,103.60|1.48,104.00"
 
+# NUS campus bounding box — covers main campus + UTown + BG-MRT area
+# UTown is at ~1.305, Raffles at ~1.305, BG-MRT at ~1.322 — old 1.310 cutoff was wrong
+_NUS_BOUNDS = "1.285,103.765|1.325,103.820"
+
 # Above this straight-line distance, switch from walking to transit mode
 _TRANSIT_THRESHOLD_M = 2000
 
@@ -212,8 +216,8 @@ async def _places_search(query: str, api_key: str) -> Optional[tuple[float, floa
 
 
 # NUS campus bounding box — results inside this are preferred over off-campus matches
-_NUS_LAT = (1.285, 1.310)
-_NUS_LNG = (103.765, 103.800)
+_NUS_LAT = (1.285, 1.325)
+_NUS_LNG = (103.765, 103.820)
 
 
 def _on_campus(lat: float, lng: float) -> bool:
@@ -233,9 +237,16 @@ async def geocode_with_candidates(
     if not api_key:
         return None, []
 
+    import re as _re
+    # "AS6" → "AS 6", "E1A" → "E 1A" — helps Google find NUS building codes
+    spaced = _re.sub(r'([A-Za-z]+)(\d)', r'\1 \2', query).strip()
+
     sg     = await _geocode_query(f"{query}, Singapore",      _SG_BOUNDS,  api_key)
     nus    = await _geocode_query(f"{query} NUS, Singapore",  _NUS_BOUNDS, api_key)
     places = await _places_search(f"{query} NUS Singapore", api_key)
+    # Extra pass with spaced variant for short building codes
+    if not any(_on_campus(*r) for r in [sg, nus, places] if r) and spaced != query:
+        places = await _places_search(f"{spaced} NUS Singapore", api_key) or places
 
     on_campus  = next((r for r in [sg, nus, places] if r and _on_campus(*r)), None)
     off_campus = sg if sg and not _on_campus(*sg) else None
