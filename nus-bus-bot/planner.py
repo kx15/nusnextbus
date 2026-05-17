@@ -224,6 +224,43 @@ def _on_campus(lat: float, lng: float) -> bool:
     return _NUS_LAT[0] <= lat <= _NUS_LAT[1] and _NUS_LNG[0] <= lng <= _NUS_LNG[1]
 
 
+def _building_code_expansions(query: str) -> list[str]:
+    """
+    Return alternative search strings for short NUS building/room codes.
+    e.g. "lt24" → ["Lecture Theatre 24 NUS Singapore", "LT 24 NUS Singapore"]
+         "as6"  → ["AS 6 NUS Singapore"]
+         "e3a"  → ["Engineering Block E3A NUS Singapore"]
+    """
+    import re as _re
+    q = query.strip().upper()
+    exps: list[str] = []
+
+    m = _re.match(r'^LT(\d+[A-Z]?)$', q)
+    if m:
+        exps += [f"Lecture Theatre {m.group(1)} NUS Singapore",
+                 f"LT {m.group(1)} NUS Singapore"]
+        return exps
+
+    m = _re.match(r'^E(\d+[A-Z]?)$', q)
+    if m:
+        exps += [f"NUS Engineering Block E{m.group(1)} Singapore",
+                 f"E {m.group(1)} NUS Singapore"]
+        return exps
+
+    m = _re.match(r'^S(\d+[A-Z]?)$', q)
+    if m:
+        exps += [f"NUS Science Block S{m.group(1)} Singapore",
+                 f"S {m.group(1)} NUS Singapore"]
+        return exps
+
+    # Generic: letters + digits (e.g. AS6, COM1)
+    m = _re.match(r'^([A-Z]+)(\d+[A-Z]?)$', q)
+    if m:
+        exps.append(f"{m.group(1)} {m.group(2)} NUS Singapore")
+
+    return exps
+
+
 async def geocode_with_candidates(
     query: str,
 ) -> tuple[Optional[tuple[float, float]], list[dict]]:
@@ -237,16 +274,17 @@ async def geocode_with_candidates(
     if not api_key:
         return None, []
 
-    import re as _re
-    # "AS6" → "AS 6", "E1A" → "E 1A" — helps Google find NUS building codes
-    spaced = _re.sub(r'([A-Za-z]+)(\d)', r'\1 \2', query).strip()
-
     sg     = await _geocode_query(f"{query}, Singapore",      _SG_BOUNDS,  api_key)
     nus    = await _geocode_query(f"{query} NUS, Singapore",  _NUS_BOUNDS, api_key)
     places = await _places_search(f"{query} NUS Singapore", api_key)
-    # Extra pass with spaced variant for short building codes
-    if not any(_on_campus(*r) for r in [sg, nus, places] if r) and spaced != query:
-        places = await _places_search(f"{spaced} NUS Singapore", api_key) or places
+
+    # If still no on-campus hit, try expanded building-code queries (LT24, AS6, E3A…)
+    if not any(_on_campus(*r) for r in [sg, nus, places] if r):
+        for alt in _building_code_expansions(query):
+            result = await _places_search(alt, api_key)
+            if result and _on_campus(*result):
+                places = result
+                break
 
     on_campus  = next((r for r in [sg, nus, places] if r and _on_campus(*r)), None)
     off_campus = sg if sg and not _on_campus(*sg) else None
@@ -291,6 +329,12 @@ async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     places_result = await _places_search(f"{query} NUS Singapore", api_key)
     if places_result and _on_campus(*places_result):
         return places_result
+
+    # Try expanded building-code queries (LT24, E3A, AS6 …)
+    for alt in _building_code_expansions(query):
+        r = await _places_search(alt, api_key)
+        if r and _on_campus(*r):
+            return r
 
     # Nothing on campus found — accept off-campus stage-1 result if it exists
     return sg_result or nus_result or places_result
