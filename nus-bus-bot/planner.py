@@ -220,6 +220,38 @@ def _on_campus(lat: float, lng: float) -> bool:
     return _NUS_LAT[0] <= lat <= _NUS_LAT[1] and _NUS_LNG[0] <= lng <= _NUS_LNG[1]
 
 
+async def geocode_with_candidates(
+    query: str,
+) -> tuple[Optional[tuple[float, float]], list[dict]]:
+    """
+    Resolve a query to (best_lat_lng, candidates).
+    candidates is a non-empty list of {"lat","lng","label"} dicts only when
+    an on-campus and an off-campus result both exist and are >300 m apart.
+    In that case the caller should ask the user to pick one.
+    """
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        return None, []
+
+    sg     = await _geocode_query(f"{query}, Singapore",      _SG_BOUNDS,  api_key)
+    nus    = await _geocode_query(f"{query} NUS, Singapore",  _NUS_BOUNDS, api_key)
+    places = await _places_search(f"{query} NUS Singapore", api_key)
+
+    on_campus  = next((r for r in [sg, nus, places] if r and _on_campus(*r)), None)
+    off_campus = sg if sg and not _on_campus(*sg) else None
+
+    if on_campus and off_campus:
+        dist = haversine_m(on_campus[0], on_campus[1], off_campus[0], off_campus[1])
+        if dist > 300:
+            return on_campus, [
+                {"lat": on_campus[0],  "lng": on_campus[1],  "label": f"{query.title()} (NUS campus)"},
+                {"lat": off_campus[0], "lng": off_campus[1], "label": f"{query.title()} (outside NUS)"},
+            ]
+
+    best = on_campus or sg or nus or places
+    return best, []
+
+
 async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     """
     Resolve a free-text location to (lat, lng).
