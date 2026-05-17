@@ -801,20 +801,40 @@ async def _route_on_campus(
         lines.append(f"[open in Google Maps]({maps_url})")
 
     elif is_bt_origin and not is_bt_dest:
-        # Departing from Bukit Timah campus: Bus P to a hub, then shuttle to destination
-        transfer_shown = False
+        # Departing from Bukit Timah campus: Bus P to best hub, then shuttle to dest.
+        # Score each hub by: P stops to hub + fewest connecting bus stops to dest.
+        best: dict | None = None
+        best_score = 10_000
+
         for hub_name in all_hubs:
             hub_stop = find_stop(hub_name)
             hub_arr  = hub_arrivals.get(hub_name)
             if not hub_stop or isinstance(hub_arr, Exception):
                 continue
             hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
-            # Bus P must connect origin → hub, and hub must connect to destination
             if "P" not in origin_names or "P" not in hub_names:
                 continue
-            to_dest = hub_names & dest_names  # buses from hub to destination
+            to_dest = hub_names & dest_names
             if not to_dest:
                 continue
+
+            p_to_hub = _nus_stops_between("P", origin["name"], hub_name) or 999
+            min_conn = min(
+                (_nus_stops_between(bus, hub_name, dest_stop["name"]) or 999)
+                for bus in to_dest
+            )
+            score = p_to_hub + min_conn
+            if score < best_score:
+                best_score = score
+                best = {"hub": hub_stop, "arr": hub_arr,
+                        "hub_name": hub_name, "to_dest": to_dest}
+
+        transfer_shown = bool(best)
+        if best:
+            hub_stop = best["hub"]
+            hub_arr  = best["arr"]
+            hub_name = best["hub_name"]
+            to_dest  = best["to_dest"]
 
             lines.append(f"🚌 *From Bukit Timah campus via Bus P*\n")
 
@@ -828,7 +848,8 @@ async def _route_on_campus(
             lines.append("")
 
             # Step 2: Connecting shuttle from hub to destination
-            step2 = sorted(to_dest)[0]
+            step2 = min(to_dest,
+                        key=lambda b: _nus_stops_between(b, hub_name, dest_stop["name"]) or 999)
             for t in hub_arr.timings:
                 if t.name == step2:
                     lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']}*")
@@ -837,8 +858,6 @@ async def _route_on_campus(
                     break
             lines.append("")
             lines.append(f"[open in Google Maps]({maps_url})")
-            transfer_shown = True
-            break
 
         if not transfer_shown:
             lines.append("Bus P not available right now 💀\n")
