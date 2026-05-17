@@ -38,14 +38,34 @@ STOPS = [
 ]
 
 
+_SKIP_WORDS = {"NUS", "THE", "OF", "AT", "IN", "AND", "A", "AN",
+               "NATIONAL", "UNIVERSITY", "SINGAPORE"}
+
+
 def find_stop(query: str) -> Optional[dict]:
     q = query.strip().upper()
+
+    # 1. Exact name match
     for stop in STOPS:
         if stop["name"].upper() == q:
             return stop
+
+    # 2. Full substring match
     for stop in STOPS:
         if q in stop["name"].upper() or q in stop["caption"].upper():
             return stop
+
+    # 3. Token match — strip non-distinctive words like "NUS", then require all
+    #    remaining tokens to appear in the stop name or caption.
+    #    e.g. "NUS health centre" → tokens=["HEALTH","CENTRE"] → matches UHC.
+    tokens = [w for w in q.split() if w not in _SKIP_WORDS and len(w) > 1]
+    if tokens:
+        for stop in STOPS:
+            caption = stop["caption"].upper()
+            name    = stop["name"].upper()
+            if all(t in caption or t in name for t in tokens):
+                return stop
+
     return None
 
 
