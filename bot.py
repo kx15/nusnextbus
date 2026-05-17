@@ -663,8 +663,10 @@ def _append_directions_block(lines: list, directions) -> None:
 
 # Stops at Bukit Timah campus — only reachable via Bus P
 _BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "OTH"}
-# Best stops to board Bus P when origin doesn't have it directly
-_BUS_P_HUBS = ["UTOWN", "KR-MRT", "MUSEUM"]
+# Transfer hubs for arriving at BT campus (UTOWN first — closer in P route direction)
+_BUS_P_HUBS_ARRIVAL   = ["UTOWN", "KR-MRT", "MUSEUM"]
+# Transfer hubs for departing BT campus (KR-MRT first — only 2 stops from OTH on P)
+_BUS_P_HUBS_DEPARTURE = ["KR-MRT", "UTOWN", "MUSEUM"]
 
 
 async def _route_on_campus(
@@ -682,17 +684,25 @@ async def _route_on_campus(
     is_bt_origin = origin["name"] in _BUKIT_TIMAH_STOPS
     is_bt = is_bt_dest or is_bt_origin
 
+    # Choose hub order based on direction of travel
+    _bt_hubs = (_BUS_P_HUBS_DEPARTURE if is_bt_origin else _BUS_P_HUBS_ARRIVAL) if is_bt else []
+    # Deduplicate while preserving order (in case lists overlap)
+    seen: set = set()
+    all_hubs: list = []
+    for h in _bt_hubs:
+        if h not in seen:
+            seen.add(h)
+            all_hubs.append(h)
+
     # Fetch arrival data — include Bus P hub stops for any BT-related route
-    fetch_names = [origin["name"], dest_stop["name"]]
-    if is_bt:
-        fetch_names += _BUS_P_HUBS
+    fetch_names = [origin["name"], dest_stop["name"]] + all_hubs
     results = await asyncio.gather(
         *[get_arrivals_async(n) for n in fetch_names],
         return_exceptions=True,
     )
     origin_arrivals = results[0]
     dest_arrivals   = results[1]
-    hub_arrivals    = {name: results[2 + i] for i, name in enumerate(_BUS_P_HUBS)} if is_bt else {}
+    hub_arrivals    = {name: results[2 + i] for i, name in enumerate(all_hubs)}
 
     origin_names: set = set()
     if not isinstance(origin_arrivals, Exception):
@@ -761,7 +771,7 @@ async def _route_on_campus(
     elif is_bt_origin and not is_bt_dest:
         # Departing from Bukit Timah campus: Bus P to a hub, then shuttle to destination
         transfer_shown = False
-        for hub_name in _BUS_P_HUBS:
+        for hub_name in all_hubs:
             hub_stop = find_stop(hub_name)
             hub_arr  = hub_arrivals.get(hub_name)
             if not hub_stop or isinstance(hub_arr, Exception):
@@ -806,7 +816,7 @@ async def _route_on_campus(
     elif is_bt_dest:
         # Arriving at Bukit Timah campus — try Bus P transfer via a hub stop
         transfer_shown = False
-        for hub_name in _BUS_P_HUBS:
+        for hub_name in all_hubs:
             hub_stop = find_stop(hub_name)
             hub_arr  = hub_arrivals.get(hub_name)
             if not hub_stop or isinstance(hub_arr, Exception):
