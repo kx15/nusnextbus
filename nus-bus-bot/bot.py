@@ -851,7 +851,13 @@ async def _route_offcampus_to_campus(
     dest_is_exact_stop: bool,
 ) -> None:
     """Off-campus → on-campus: public transit to gateway + NUS shuttle + walk."""
-    gateways = [(find_stop(name), addr) for name, addr in _GATEWAYS if find_stop(name)]
+    # For Bukit Timah campus destinations, prefer BG-MRT gateway — it's adjacent
+    # to BT campus and avoids the long detour south to Kent Ridge MRT.
+    if dest_stop["name"] in _BUKIT_TIMAH_STOPS:
+        ordered = sorted(_GATEWAYS, key=lambda x: 0 if x[0] == "BG-MRT" else 1)
+    else:
+        ordered = _GATEWAYS
+    gateways = [(find_stop(name), addr) for name, addr in ordered if find_stop(name)]
     logger.info("off-campus routing: origin=%s dest_stop=%s gateways=%d",
                 origin_loc, dest_stop["name"], len(gateways))
 
