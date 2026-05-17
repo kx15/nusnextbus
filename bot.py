@@ -619,6 +619,12 @@ def _append_directions_block(lines: list, directions) -> None:
     lines.append(f"[open in Google Maps]({directions['maps_url']})")
 
 
+# Stops that are only reachable via Bus P (Bukit Timah campus)
+_BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "RAFFLES", "KV"}
+# Best stops to board Bus P when origin doesn't have it directly
+_BUS_P_HUBS = ["UTOWN", "KR-MRT", "MUSEUM"]
+
+
 async def _route_on_campus(
     lines: list,
     origin: dict,
@@ -629,48 +635,107 @@ async def _route_on_campus(
     dest_is_exact_stop: bool,
 ) -> None:
     """On-campus → on-campus: NUS shuttle + walk."""
-    origin_arrivals, dest_arrivals = await asyncio.gather(
-        get_arrivals_async(origin["name"]),
-        get_arrivals_async(dest_stop["name"]),
+    is_bt = dest_stop["name"] in _BUKIT_TIMAH_STOPS
+
+    # Fetch arrival data — include Bus P hub stops when heading to Bukit Timah
+    fetch_names = [origin["name"], dest_stop["name"]]
+    if is_bt:
+        fetch_names += _BUS_P_HUBS
+    results = await asyncio.gather(
+        *[get_arrivals_async(n) for n in fetch_names],
         return_exceptions=True,
     )
+    origin_arrivals = results[0]
+    dest_arrivals   = results[1]
+    hub_arrivals    = {name: results[2 + i] for i, name in enumerate(_BUS_P_HUBS)} if is_bt else {}
 
-    common: set = set()
-    if not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
+    origin_names: set = set()
+    if not isinstance(origin_arrivals, Exception):
         origin_names = {t.name for t in origin_arrivals.timings if not t.name.strip().isdigit()}
-        dest_names   = {t.name for t in dest_arrivals.timings   if not t.name.strip().isdigit()}
-        common = origin_names & dest_names
+
+    dest_names: set = set()
+    if not isinstance(dest_arrivals, Exception):
+        dest_names = {t.name for t in dest_arrivals.timings if not t.name.strip().isdigit()}
+
+    common = origin_names & dest_names
+
+    from urllib.parse import quote as _quote
+    origin_addr = _quote(f"{origin['caption']} NUS Singapore")
+    maps_url = (
+        f"https://www.google.com/maps/dir/?api=1"
+        f"&origin={origin_addr}"
+        f"&destination={dest_lat},{dest_lng}"
+        f"&travelmode={'transit' if is_bt else 'walking'}"
+    )
+
+    transit_url = (
+        f"https://www.google.com/maps/dir/?api=1"
+        f"&origin={origin_loc[0]},{origin_loc[1]}"
+        f"&destination={dest_lat},{dest_lng}&travelmode=transit"
+    )
 
     if common:
+        # Direct shuttle available
         lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*")
         for t in origin_arrivals.timings:
             if t.name in common:
-                lines.append(
-                    "  " + _fmt_nus_shuttle(t.name, origin, dest_stop,
-                                            t.arrival_time, t.next_arrival_time)
-                )
+                lines.append("  " + _fmt_nus_shuttle(t.name, origin, dest_stop,
+                                                      t.arrival_time, t.next_arrival_time))
         lines.append("")
-        # Last-mile walk from the bus stop to the final building
         if not dest_is_exact_stop:
             walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
             if not isinstance(walk, Exception) and walk.get("duration"):
                 lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
                 _fmt_steps(lines, walk.get("steps", []))
                 lines.append("")
+        lines.append(f"[open in Google Maps]({maps_url})")
+
+    elif is_bt:
+        # Bukit Timah campus — try Bus P transfer via a hub stop
+        transfer_shown = False
+        for hub_name in _BUS_P_HUBS:
+            hub_stop = find_stop(hub_name)
+            hub_arr  = hub_arrivals.get(hub_name)
+            if not hub_stop or isinstance(hub_arr, Exception):
+                continue
+            hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
+            to_hub    = origin_names & hub_names   # buses that go from origin to hub
+            if not to_hub or "P" not in hub_names:
+                continue
+
+            # Show 2-step transfer
+            lines.append(f"🚌 *Bus P to Bukit Timah campus*\n")
+
+            step1 = sorted(to_hub)[0]
+            for t in origin_arrivals.timings:
+                if t.name == step1:
+                    lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")
+                    lines.append(f"  Take *{step1}* — {_fmt_time(t.arrival_time)} | Next: {_fmt_time(t.next_arrival_time)}")
+                    break
+            lines.append("")
+
+            for t in hub_arr.timings:
+                if t.name == "P":
+                    lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']} (Bus P)*")
+                    lines.append(f"  Take *P* — {_fmt_time(t.arrival_time)} | Next: {_fmt_time(t.next_arrival_time)}")
+                    break
+            lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+            transfer_shown = True
+            break
+
+        if not transfer_shown:
+            lines.append("Bus P not available right now 💀\n")
+            lines.append("🚇 *take public transport instead:*")
+            lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
+
     else:
-        # No shuttle: walk directly from origin to destination
+        # Non-BT no-shuttle: walk or transit
         walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
         walk_m = walk.get("distance_m", 0) if (walk and not isinstance(walk, Exception)) else 0
-
         if walk_m > 800:
-            # Too far to walk comfortably — suggest public bus via Google Maps transit
             lines.append("no direct NUS bus and it's quite far to walk 💀\n")
             lines.append("🚌 *take a public bus instead:*")
-            transit_url = (
-                f"https://www.google.com/maps/dir/?api=1"
-                f"&origin={origin_loc[0]},{origin_loc[1]}"
-                f"&destination={dest_lat},{dest_lng}&travelmode=transit"
-            )
             lines.append(f"[public transport options in Google Maps]({transit_url})")
         else:
             lines.append("no direct NUS bus — walking instead 🚶\n")
@@ -678,15 +743,7 @@ async def _route_on_campus(
                 lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
                 _fmt_steps(lines, walk.get("steps", []))
                 lines.append("")
-
-    from urllib.parse import quote as _quote
-    origin_addr = _quote(f"{origin['caption']} NUS Singapore")
-    maps_url = (
-        f"https://www.google.com/maps/dir/?api=1"
-        f"&origin={origin_addr}"
-        f"&destination={dest_lat},{dest_lng}&travelmode=walking"
-    )
-    lines.append(f"[open in Google Maps]({maps_url})")
+        lines.append(f"[open in Google Maps]({maps_url})")
 
 
 async def _route_offcampus_to_campus(
