@@ -26,7 +26,7 @@ from telegram.ext import (
 
 from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
-from planner import geocode_nus, get_walking_directions
+from planner import geocode_sg, get_directions
 from stops import STOPS, find_stop, nearby_stops
 
 load_dotenv()
@@ -378,7 +378,7 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             dest_lat, dest_lng = dest_stop["lat"], dest_stop["lng"]
             dest_label = dest_stop["caption"]
         else:
-            coords = await geocode_nus(query)
+            coords = await geocode_sg(query)
             if coords:
                 dest_lat, dest_lng = coords
                 dest_label = query
@@ -386,13 +386,13 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 if stops:
                     dest_stop = stops[0]
 
-    if not dest_stop or dest_lat is None:
+    if dest_lat is None:
         await update.message.reply_text(
             "couldn't find that place 😭\ntry a different name or share your destination 📍"
         )
         return PLAN_DEST
 
-    if dest_stop["name"] == origin["name"]:
+    if dest_stop and dest_stop["name"] == origin["name"]:
         await update.message.reply_text(
             "that's where you already are lol 💀\nwhere do you actually wanna go?"
         )
@@ -401,24 +401,26 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     msg = await update.message.reply_text("planning your route one sec 👀")
 
     try:
-        origin_arrivals, dest_arrivals, walking = await asyncio.gather(
-            get_arrivals_async(origin["name"]),
-            get_arrivals_async(dest_stop["name"]),
-            get_walking_directions(
-                origin_loc[0], origin_loc[1],
-                dest_lat, dest_lng,
-            ),
-            return_exceptions=True,
-        )
+        # Only fetch NUS shuttle arrivals when destination has a nearby campus stop
+        if dest_stop:
+            origin_arrivals, dest_arrivals, directions = await asyncio.gather(
+                get_arrivals_async(origin["name"]),
+                get_arrivals_async(dest_stop["name"]),
+                get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng),
+                return_exceptions=True,
+            )
+        else:
+            origin_arrivals = dest_arrivals = None
+            directions = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
 
         lines = [f"🗺 *{origin['caption']} → {dest_label}*\n"]
 
-        if not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
+        if dest_stop and not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
             origin_names = {t.name for t in origin_arrivals.timings if not t.name.strip().isdigit()}
             dest_names   = {t.name for t in dest_arrivals.timings   if not t.name.strip().isdigit()}
             common = origin_names & dest_names
             if common:
-                lines.append("🚌 *buses serving both stops:*")
+                lines.append("🚌 *NUS buses serving both stops:*")
                 for t in origin_arrivals.timings:
                     if t.name in common:
                         lines.append(
@@ -427,16 +429,18 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                         )
                 lines.append("")
             else:
-                lines.append("no direct bus — might need a transfer or just walk 🚶\n")
+                lines.append("no direct NUS bus — might need a transfer or just walk 🚶\n")
 
-        if not isinstance(walking, Exception) and walking:
-            if walking.get("duration"):
-                lines.append(f"🚶 *walking*: {walking['distance']} · {walking['duration']}")
-            for i, step in enumerate(walking.get("steps", []), 1):
+        if not isinstance(directions, Exception) and directions:
+            mode = directions.get("mode", "walking")
+            icon = "🚇" if mode == "transit" else "🚶"
+            if directions.get("duration"):
+                lines.append(f"{icon} *{mode}*: {directions['distance']} · {directions['duration']}")
+            for i, step in enumerate(directions.get("steps", []), 1):
                 lines.append(f"{i}. {step['instruction']} _({step['distance']})_")
-            if walking.get("steps"):
+            if directions.get("steps"):
                 lines.append("")
-            lines.append(f"[open in Google Maps]({walking['maps_url']})")
+            lines.append(f"[open in Google Maps]({directions['maps_url']})")
 
         await msg.edit_text(
             "\n".join(lines),
