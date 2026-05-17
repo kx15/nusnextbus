@@ -11,12 +11,14 @@ from telegram import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     Update,
 )
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
+    ConversationHandler,
     MessageHandler,
     filters,
     ContextTypes,
@@ -24,10 +26,12 @@ from telegram.ext import (
 
 from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
-from planner import get_walking_directions
+from planner import geocode_nus, get_walking_directions
 from stops import STOPS, find_stop, nearby_stops
 
 load_dotenv()
+
+PLAN_ORIGIN, PLAN_DEST = range(2)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -125,7 +129,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "no more standing at the stop praying fr\n\n"
         "• /all — every bus on campus rn\n"
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
-        "• /plan `<from> <to>` — route planner (e.g. `/plan CLB UTOWN`)\n"
+        "• /plan — route planner (share location → type destination)\n"
         "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
         "• /help — what is this app",
@@ -318,49 +322,96 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_reply_markup(reply_markup=keyboard)
 
 
-async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args or len(context.args) < 2:
+async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "where are you? 📍",
+        reply_markup=_location_keyboard(),
+    )
+    return PLAN_ORIGIN
+
+
+async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    loc = update.message.location
+    stops = nearby_stops(loc.latitude, loc.longitude, radius_m=800)
+    if not stops:
         await update.message.reply_text(
-            "Usage: /plan <from> <to>\ne.g. `/plan CLB UTOWN`",
-            parse_mode="Markdown",
+            "you don't seem to be on NUS campus 💀\ntry /plan again from within NUS",
+            reply_markup=ReplyKeyboardRemove(),
         )
-        return
+        return ConversationHandler.END
 
-    args = context.args
-    origin_stop = dest_stop = None
+    origin = stops[0]
+    context.user_data["plan_origin"] = origin
+    context.user_data["plan_origin_loc"] = (loc.latitude, loc.longitude)
 
-    # Try every split point so multi-word captions work (e.g. "college green")
-    for i in range(1, len(args)):
-        o = find_stop(" ".join(args[:i]))
-        d = find_stop(" ".join(args[i:]))
-        if o and d:
-            origin_stop, dest_stop = o, d
-            break
+    await update.message.reply_text(
+        f"📍 nearest stop: *{origin['caption']}*\n\nwhere are you going? 🏫\n_type a place or stop name_",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return PLAN_DEST
 
-    if not origin_stop or not dest_stop:
+
+async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    origin = context.user_data.get("plan_origin")
+    origin_loc = context.user_data.get("plan_origin_loc")
+
+    if not origin:
+        await update.message.reply_text("something went wrong, try /plan again")
+        return ConversationHandler.END
+
+    dest_stop = None
+    dest_lat = dest_lng = None
+    dest_label = None
+
+    if update.message.location:
+        loc = update.message.location
+        dest_lat, dest_lng = loc.latitude, loc.longitude
+        stops = nearby_stops(dest_lat, dest_lng, radius_m=800)
+        if stops:
+            dest_stop = stops[0]
+            dest_label = dest_stop["caption"]
+    else:
+        query = update.message.text.strip()
+        dest_stop = find_stop(query)
+        if dest_stop:
+            dest_lat, dest_lng = dest_stop["lat"], dest_stop["lng"]
+            dest_label = dest_stop["caption"]
+        else:
+            coords = await geocode_nus(query)
+            if coords:
+                dest_lat, dest_lng = coords
+                dest_label = query
+                stops = nearby_stops(dest_lat, dest_lng, radius_m=800)
+                if stops:
+                    dest_stop = stops[0]
+
+    if not dest_stop or dest_lat is None:
         await update.message.reply_text(
-            "couldn't find those stops bestie 😭\nuse /stops to browse all stops"
+            "couldn't find that place 😭\ntry a different name or share your destination 📍"
         )
-        return
+        return PLAN_DEST
 
-    if origin_stop["name"] == dest_stop["name"]:
-        await update.message.reply_text("you're already there lol 💀")
-        return
+    if dest_stop["name"] == origin["name"]:
+        await update.message.reply_text(
+            "that's where you already are lol 💀\nwhere do you actually wanna go?"
+        )
+        return PLAN_DEST
 
     msg = await update.message.reply_text("planning your route one sec 👀")
 
     try:
         origin_arrivals, dest_arrivals, walking = await asyncio.gather(
-            get_arrivals_async(origin_stop["name"]),
+            get_arrivals_async(origin["name"]),
             get_arrivals_async(dest_stop["name"]),
             get_walking_directions(
-                origin_stop["lat"], origin_stop["lng"],
-                dest_stop["lat"], dest_stop["lng"],
+                origin_loc[0], origin_loc[1],
+                dest_lat, dest_lng,
             ),
             return_exceptions=True,
         )
 
-        lines = [f"🗺 *{origin_stop['caption']} → {dest_stop['caption']}*\n"]
+        lines = [f"🗺 *{origin['caption']} → {dest_label}*\n"]
 
         if not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
             origin_names = {t.name for t in origin_arrivals.timings if not t.name.strip().isdigit()}
@@ -376,7 +427,7 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                         )
                 lines.append("")
             else:
-                lines.append("no direct bus found — might need a transfer or just walk 🚶\n")
+                lines.append("no direct bus — might need a transfer or just walk 🚶\n")
 
         if not isinstance(walking, Exception) and walking:
             if walking.get("duration"):
@@ -389,8 +440,19 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             disable_web_page_preview=True,
         )
     except Exception:
-        logger.exception("Plan command failed")
+        logger.exception("Plan conversation failed")
         await msg.edit_text("something broke 💀 try again")
+
+    context.user_data.pop("plan_origin", None)
+    context.user_data.pop("plan_origin_loc", None)
+    return ConversationHandler.END
+
+
+async def plan_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("plan_origin", None)
+    context.user_data.pop("plan_origin_loc", None)
+    await update.message.reply_text("plan cancelled 👍", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
 
 
 async def post_init(app: Application) -> None:
@@ -398,7 +460,7 @@ async def post_init(app: Application) -> None:
         BotCommand("start",    "What is this app"),
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
-        BotCommand("plan",     "Plan a route between two stops"),
+        BotCommand("plan",     "Plan a route to anywhere on campus"),
         BotCommand("nearby",   "Find stops near you 📍"),
         BotCommand("fav",      "Your favourite stops"),
         BotCommand("help",     "Show this message"),
@@ -411,12 +473,24 @@ def main() -> None:
 
     app = Application.builder().token(token).post_init(post_init).build()
 
+    plan_handler = ConversationHandler(
+        entry_points=[CommandHandler("plan", plan_start)],
+        states={
+            PLAN_ORIGIN: [MessageHandler(filters.LOCATION, plan_got_origin)],
+            PLAN_DEST: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, plan_got_dest),
+                MessageHandler(filters.LOCATION, plan_got_dest),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", plan_cancel)],
+    )
+
     app.add_handler(CommandHandler("start",    start))
     app.add_handler(CommandHandler("help",     help_command))
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals", arrivals_command))
-    app.add_handler(CommandHandler("plan",     plan_command))
+    app.add_handler(plan_handler)
     app.add_handler(CommandHandler("nearby",   nearby_command))
     app.add_handler(CommandHandler("fav",      fav_command))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
