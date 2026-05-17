@@ -372,22 +372,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.answer()
         route = _NUS_ROUTES.get(service)
         if not route:
-            await query.edit_message_text(f"Route not found for {service}")
+            await query.answer(f"Route not found for {service}", show_alert=True)
             return
         lines = [f"🚌 *Bus {service} — Route*\n"]
         for i, stop_name in enumerate(route, 1):
             stop = find_stop(stop_name)
             caption = stop["caption"] if stop else stop_name
             lines.append(f"{i}. {caption}")
-        all_services = sorted(_NUS_ROUTES.keys())
-        buttons = [
-            [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
-            for name in all_services
-        ]
-        await query.edit_message_text(
-            "\n".join(lines),
+        # Send route as a new message below — buttons stay intact above
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="\n".join(lines),
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(buttons),
         )
 
 
