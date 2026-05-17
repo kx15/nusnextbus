@@ -30,9 +30,9 @@ _GMAPS_PLACES_SEARCH = "https://maps.googleapis.com/maps/api/place/textsearch/js
 # Singapore bounding box for geocoding bias
 _SG_BOUNDS = "1.15,103.60|1.48,104.00"
 
-# NUS campus bounding box — covers main campus + UTown + BG-MRT area
-# UTown is at ~1.305, Raffles at ~1.305, BG-MRT at ~1.322 — old 1.310 cutoff was wrong
-_NUS_BOUNDS = "1.285,103.765|1.325,103.820"
+# NUS campus bounding box — covers main campus + UTown + Bukit Timah campus
+# CG/OTH/BG-MRT are at ~1.319-1.323, 103.815-103.818 (Bukit Timah)
+_NUS_BOUNDS = "1.285,103.765|1.330,103.820"
 
 # Above this straight-line distance, switch from walking to transit mode
 _TRANSIT_THRESHOLD_M = 2000
@@ -218,7 +218,7 @@ async def _places_search(query: str, api_key: str) -> Optional[tuple[float, floa
 
 
 # NUS campus bounding box — results inside this are preferred over off-campus matches
-_NUS_LAT = (1.285, 1.325)
+_NUS_LAT = (1.285, 1.330)
 _NUS_LNG = (103.765, 103.820)
 
 
