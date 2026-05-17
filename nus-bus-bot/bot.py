@@ -702,7 +702,13 @@ async def _route_on_campus(
     if not isinstance(dest_arrivals, Exception):
         dest_names = {t.name for t in dest_arrivals.timings if not t.name.strip().isdigit()}
 
-    common = origin_names & dest_names
+    # Only keep buses that travel origin→dest in the correct sequence.
+    # A bus serving both stops but in the wrong direction (dest comes before origin
+    # in the route) must be excluded — e.g. D1 at CLB→NUSS-OPP is reversed.
+    common = {
+        bus for bus in (origin_names & dest_names)
+        if _nus_stops_between(bus, origin["name"], dest_stop["name"]) is not None
+    }
 
     from urllib.parse import quote as _quote
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
