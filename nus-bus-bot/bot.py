@@ -699,6 +699,13 @@ _BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "OTH"}
 _BUS_P_HUBS_ARRIVAL   = ["UTOWN", "KR-MRT", "MUSEUM"]
 # Transfer hubs for departing BT campus (KR-MRT first — only 2 stops from OTH on P)
 _BUS_P_HUBS_DEPARTURE = ["KR-MRT", "UTOWN", "MUSEUM"]
+# Companion stops — same physical location, opposite side of road.
+# Used to find shorter connecting routes (e.g. D2 from KR-MRT-OPP is 3 stops to COM3
+# vs 12 stops from KR-MRT itself).
+_COMPANION_STOPS: dict[str, str] = {
+    "KR-MRT":     "KR-MRT-OPP",
+    "KR-MRT-OPP": "KR-MRT",
+}
 
 
 async def _route_on_campus(
@@ -726,15 +733,22 @@ async def _route_on_campus(
             seen.add(h)
             all_hubs.append(h)
 
-    # Fetch arrival data — include Bus P hub stops for any BT-related route
-    fetch_names = [origin["name"], dest_stop["name"]] + all_hubs
+    # Include companion stops (opposite side of road) so they can be scored too
+    companion_names = [
+        _COMPANION_STOPS[h] for h in all_hubs
+        if h in _COMPANION_STOPS and _COMPANION_STOPS[h] not in all_hubs
+    ]
+    all_fetch_hubs = all_hubs + companion_names
+
+    # Fetch arrival data — hub stops + their companions
+    fetch_names = [origin["name"], dest_stop["name"]] + all_fetch_hubs
     results = await asyncio.gather(
         *[get_arrivals_async(n) for n in fetch_names],
         return_exceptions=True,
     )
     origin_arrivals = results[0]
     dest_arrivals   = results[1]
-    hub_arrivals    = {name: results[2 + i] for i, name in enumerate(all_hubs)}
+    hub_arrivals    = {name: results[2 + i] for i, name in enumerate(all_fetch_hubs)}
 
     origin_names: set = set()
     if not isinstance(origin_arrivals, Exception):
@@ -814,46 +828,76 @@ async def _route_on_campus(
             hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
             if "P" not in origin_names or "P" not in hub_names:
                 continue
-            to_dest = hub_names & dest_names
+
+            p_to_hub = _nus_stops_between("P", origin["name"], hub_name) or 999
+
+            # Score direct connections from hub
+            to_dest_direct = hub_names & dest_names
+            min_direct = min(
+                (_nus_stops_between(bus, hub_name, dest_stop["name"]) or 999)
+                for bus in to_dest_direct
+            ) if to_dest_direct else 999
+
+            # Score via companion stop (cross the road — same physical location)
+            comp_name = _COMPANION_STOPS.get(hub_name)
+            comp_arr  = hub_arrivals.get(comp_name) if comp_name else None
+            to_dest_comp = set()
+            min_comp = 999
+            if comp_name and comp_arr and not isinstance(comp_arr, Exception):
+                comp_bus_names = {t.name for t in comp_arr.timings if not t.name.strip().isdigit()}
+                to_dest_comp = comp_bus_names & dest_names
+                min_comp = min(
+                    (_nus_stops_between(bus, comp_name, dest_stop["name"]) or 999)
+                    for bus in to_dest_comp
+                ) if to_dest_comp else 999
+
+            use_companion = (min_comp < min_direct) and to_dest_comp
+            min_conn      = min_comp if use_companion else min_direct
+            to_dest       = to_dest_comp if use_companion else to_dest_direct
+
             if not to_dest:
                 continue
 
-            p_to_hub = _nus_stops_between("P", origin["name"], hub_name) or 999
-            min_conn = min(
-                (_nus_stops_between(bus, hub_name, dest_stop["name"]) or 999)
-                for bus in to_dest
-            )
             score = p_to_hub + min_conn
             if score < best_score:
                 best_score = score
-                best = {"hub": hub_stop, "arr": hub_arr,
-                        "hub_name": hub_name, "to_dest": to_dest}
+                best = {
+                    "hub": hub_stop, "hub_arr": hub_arr, "hub_name": hub_name,
+                    "to_dest": to_dest, "use_companion": use_companion,
+                    "comp_name": comp_name, "comp_arr": comp_arr,
+                }
 
         transfer_shown = bool(best)
         if best:
-            hub_stop = best["hub"]
-            hub_arr  = best["arr"]
-            hub_name = best["hub_name"]
-            to_dest  = best["to_dest"]
+            hub_stop       = best["hub"]
+            hub_arr        = best["hub_arr"]
+            hub_name       = best["hub_name"]
+            to_dest        = best["to_dest"]
+            use_companion  = best["use_companion"]
+            step2_name     = best["comp_name"] if use_companion else hub_name
+            step2_stop     = find_stop(step2_name) or hub_stop
+            step2_arr      = best["comp_arr"]   if use_companion else hub_arr
 
             lines.append(f"🚌 *From Bukit Timah campus via Bus P*\n")
 
-            # Step 1: Bus P from origin to hub
+            # Step 1: Bus P from origin to primary hub
             for t in origin_arrivals.timings:
                 if t.name == "P":
                     lines.append(f"*① {origin['caption']} → {hub_stop['caption']} (Bus P)*")
                     lines.append("  " + _fmt_nus_shuttle("P", origin, hub_stop,
                                                           t.arrival_time, t.next_arrival_time))
                     break
+            if use_companion:
+                lines.append(f"  _cross the road to {step2_stop['caption']}_")
             lines.append("")
 
-            # Step 2: Connecting shuttle from hub to destination
+            # Step 2: Connecting shuttle (from hub or companion)
             step2 = min(to_dest,
-                        key=lambda b: _nus_stops_between(b, hub_name, dest_stop["name"]) or 999)
-            for t in hub_arr.timings:
+                        key=lambda b: _nus_stops_between(b, step2_name, dest_stop["name"]) or 999)
+            for t in (step2_arr.timings if step2_arr and not isinstance(step2_arr, Exception) else []):
                 if t.name == step2:
-                    lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']}*")
-                    lines.append("  " + _fmt_nus_shuttle(step2, hub_stop, dest_stop,
+                    lines.append(f"*② {step2_stop['caption']} → {dest_stop['caption']}*")
+                    lines.append("  " + _fmt_nus_shuttle(step2, step2_stop, dest_stop,
                                                           t.arrival_time, t.next_arrival_time))
                     break
             lines.append("")
