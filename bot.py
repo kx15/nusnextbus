@@ -26,7 +26,7 @@ from telegram.ext import (
 
 from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
-from planner import geocode_sg, get_directions, get_transit_to_stop
+from planner import geocode_sg, geocode_with_candidates, get_directions, get_transit_to_stop
 from stops import STOPS, find_stop, nearby_stops
 
 load_dotenv()
@@ -333,6 +333,40 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")],
         ])
         await query.edit_message_reply_markup(reply_markup=keyboard)
+    elif data.startswith("plan_dest_candidates:") or data.startswith("dir_dest_candidates:"):
+        await query.answer()
+        key, _, idx_str = data.partition(":")
+        idx = int(idx_str)
+        candidates = context.user_data.pop(key, [])
+        if not candidates or idx >= len(candidates):
+            await query.edit_message_text("something went wrong, try again")
+            return
+        c = candidates[idx]
+        d_lat, d_lng, d_label = c["lat"], c["lng"], c["label"]
+        nearby = nearby_stops(d_lat, d_lng, radius_m=800)
+        d_stop = nearby[0] if nearby else None
+
+        if key == "plan_dest_candidates":
+            pending = context.user_data.pop("plan_pending_origin", {})
+            origin = pending.get("stop")
+            o_lat  = pending.get("lat")
+            o_lng  = pending.get("lng")
+            o_label = pending.get("label", "your location")
+        else:
+            pending = context.user_data.pop("dir_pending_origin", {})
+            origin = pending.get("stop")
+            o_lat  = pending.get("lat")
+            o_lng  = pending.get("lng")
+            o_label = pending.get("label", "your location")
+
+        if o_lat is None:
+            await query.edit_message_text("session expired, please try again")
+            return
+
+        await query.edit_message_text(f"📍 got it — routing to *{d_label}*", parse_mode="Markdown")
+        await _run_plan(query.message, origin, o_lat, o_lng, o_label,
+                        d_stop, d_lat, d_lng, d_label, False)
+
     elif data.startswith("bus:"):
         service = data.split(":", 1)[1]
         await query.answer()
@@ -370,8 +404,40 @@ async def _resolve_location(query: str) -> tuple:
     return None, None, None, query, False
 
 
-async def _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact) -> None:
-    """Resolve and send the plan message given resolved origin/destination data."""
+async def _resolve_with_candidates(query: str) -> tuple:
+    """
+    Like _resolve_location but also returns a candidates list when the query is
+    ambiguous (on-campus vs off-campus result >300 m apart).
+    Returns (nus_stop | None, lat, lng, label, is_exact_stop, candidates).
+    candidates = [] when unambiguous.
+    """
+    stop = find_stop(query)
+    if stop:
+        return stop, stop["lat"], stop["lng"], stop["caption"], True, []
+
+    coords, candidates = await geocode_with_candidates(query)
+    if coords:
+        lat, lng = coords
+        nearby = nearby_stops(lat, lng, radius_m=800)
+        return (nearby[0] if nearby else None), lat, lng, query, False, candidates
+    return None, None, None, query, False, []
+
+
+async def _ask_which_location(message, context, candidates: list, pending_key: str) -> None:
+    """Show inline buttons so user can pick among ambiguous location candidates."""
+    context.user_data[pending_key] = candidates
+    buttons = [
+        [InlineKeyboardButton(c["label"], callback_data=f"{pending_key}:{i}")]
+        for i, c in enumerate(candidates)
+    ]
+    await message.reply_text(
+        "📍 Which location did you mean?",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact) -> None:
+    """Send the route plan. `message` is a telegram.Message (reply target)."""
     import os as _os
     has_key = bool(_os.environ.get("GOOGLE_MAPS_API_KEY", ""))
     logger.info(
@@ -383,18 +449,18 @@ async def _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng,
     )
 
     if o_stop and d_stop and d_stop["name"] == o_stop["name"]:
-        await update.message.reply_text("that's the same place lol 💀")
+        await message.reply_text("that's the same place lol 💀")
         return
 
     if not has_key:
-        await update.message.reply_text(
+        await message.reply_text(
             "⚠️ Google Maps API key not configured — directions unavailable.\n"
             "Set GOOGLE\\_MAPS\\_API\\_KEY in Railway Variables.",
             parse_mode="Markdown",
         )
         return
 
-    msg = await update.message.reply_text("planning your route one sec 👀")
+    msg = await message.reply_text("planning your route one sec 👀")
     try:
         origin_loc = (o_lat, o_lng)
         lines = [f"🗺 *{o_label} → {d_label}*\n"]
@@ -446,8 +512,8 @@ async def direction_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    o_stop, o_lat, o_lng, o_label, _ = await _resolve_location(o_query)
-    d_stop, d_lat, d_lng, d_label, d_is_exact = await _resolve_location(d_query)
+    o_stop, o_lat, o_lng, o_label, _, o_candidates = await _resolve_with_candidates(o_query)
+    d_stop, d_lat, d_lng, d_label, d_is_exact, d_candidates = await _resolve_with_candidates(d_query)
 
     if o_lat is None:
         await update.message.reply_text(f"couldn't find origin: *{o_query}* 😭", parse_mode="Markdown")
@@ -456,7 +522,15 @@ async def direction_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(f"couldn't find destination: *{d_query}* 😭", parse_mode="Markdown")
         return
 
-    await _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact)
+    # If destination is ambiguous, ask user to pick before routing
+    if d_candidates:
+        context.user_data["dir_pending_origin"] = {
+            "stop": o_stop, "lat": o_lat, "lng": o_lng, "label": o_label,
+        }
+        await _ask_which_location(update.message, context, d_candidates, "dir_dest_candidates")
+        return
+
+    await _run_plan(update.message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact)
 
 
 async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -757,7 +831,17 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             dest_label = dest_stop["caption"]
     else:
         query = update.message.text.strip()
-        dest_stop, dest_lat, dest_lng, dest_label, dest_is_exact_stop = await _resolve_location(query)
+        dest_stop, dest_lat, dest_lng, dest_label, dest_is_exact_stop, candidates = \
+            await _resolve_with_candidates(query)
+
+        if candidates and dest_lat is not None:
+            # Ambiguous — ask user to pick, store origin so callback can complete the route
+            context.user_data["plan_pending_origin"] = {
+                "stop": origin, "lat": o_lat, "lng": o_lng,
+                "label": origin["caption"] if origin else "your location",
+            }
+            await _ask_which_location(update.message, context, candidates, "plan_dest_candidates")
+            return PLAN_DEST
 
     if dest_lat is None:
         await update.message.reply_text(
@@ -771,7 +855,7 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data.pop("plan_origin", None)
     context.user_data.pop("plan_origin_loc", None)
 
-    await _run_plan(update, origin, o_lat, o_lng, origin_label, dest_stop, dest_lat, dest_lng, dest_label, dest_is_exact_stop)
+    await _run_plan(update.message, origin, o_lat, o_lng, origin_label, dest_stop, dest_lat, dest_lng, dest_label, dest_is_exact_stop)
     return ConversationHandler.END
 
 
