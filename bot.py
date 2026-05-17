@@ -570,7 +570,7 @@ _NUS_ROUTES: dict[str, list[str]] = {
     # A2 confirmed route (user-verified):
     "A2": [
         "KRB", "IT", "YIH-OPP", "MUSEUM", "UHC", "UHALL-OPP",
-        "S17", "KR-MRT-OPP", "PGP", "TCOMS",
+        "S17", "KR-MRT-OPP", "PGPR", "TCOMS",
         "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "KRB",
     ],
 
