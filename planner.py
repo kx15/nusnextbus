@@ -82,34 +82,45 @@ async def get_directions(
         leg = data["routes"][0]["legs"][0]
 
         if mode == "walking":
-            steps = [
-                {
-                    "instruction": _strip_html(s["html_instructions"]),
-                    "distance": s["distance"]["text"],
-                }
-                for s in leg.get("steps", [])
-            ]
-        else:
-            # Transit: summarise each leg (walk / bus / MRT) rather than every turn
             steps = []
             for s in leg.get("steps", []):
-                travel = s.get("travel_mode", "")
-                if travel == "WALKING":
+                try:
                     steps.append({
-                        "instruction": f"🚶 Walk {s['distance']['text']}",
-                        "distance": s["duration"]["text"],
+                        "instruction": _strip_html(s.get("html_instructions", "")),
+                        "distance": s.get("distance", {}).get("text", ""),
                     })
-                elif travel == "TRANSIT":
-                    td   = s.get("transit_details", {})
-                    line = td.get("line", {})
-                    name = line.get("short_name") or line.get("name", "bus/MRT")
-                    dep  = td.get("departure_stop", {}).get("name", "")
-                    arr  = td.get("arrival_stop", {}).get("name", "")
-                    num_stops = td.get("num_stops", "?")
-                    steps.append({
-                        "instruction": f"🚌 Take {name}  {dep} → {arr}  ({num_stops} stops)",
-                        "distance": s["duration"]["text"],
-                    })
+                except Exception:
+                    pass
+        else:
+            # Transit: one entry per leg (walk segment or transit vehicle)
+            steps = []
+            for s in leg.get("steps", []):
+                try:
+                    travel = s.get("travel_mode", "")
+                    dur    = s.get("duration", {}).get("text", "")
+                    dist   = s.get("distance", {}).get("text", "")
+                    if travel == "WALKING":
+                        steps.append({
+                            "instruction": f"🚶 Walk {dist}" if dist else "🚶 Walk",
+                            "distance": dur,
+                        })
+                    elif travel == "TRANSIT":
+                        td        = s.get("transit_details", {})
+                        line      = td.get("line", {})
+                        name      = line.get("short_name") or line.get("name", "bus/MRT")
+                        dep       = td.get("departure_stop", {}).get("name", "")
+                        arr       = td.get("arrival_stop", {}).get("name", "")
+                        num_stops = td.get("num_stops", "")
+                        vehicle   = line.get("vehicle", {}).get("type", "")
+                        icon      = "🚇" if vehicle in ("SUBWAY", "RAIL", "HEAVY_RAIL", "TRAM") else "🚌"
+                        route     = f" {dep} → {arr}" if dep and arr else ""
+                        stops_txt = f" ({num_stops} stops)" if num_stops else ""
+                        steps.append({
+                            "instruction": f"{icon} Take {name}{route}{stops_txt}",
+                            "distance": dur,
+                        })
+                except Exception:
+                    pass
 
         return {
             "maps_url": maps_url,
