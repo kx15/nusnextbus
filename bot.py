@@ -619,8 +619,8 @@ def _append_directions_block(lines: list, directions) -> None:
     lines.append(f"[open in Google Maps]({directions['maps_url']})")
 
 
-# Stops that are only reachable via Bus P (Bukit Timah campus)
-_BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "RAFFLES", "KV"}
+# Stops at Bukit Timah campus — only reachable via Bus P
+_BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "OTH"}
 # Best stops to board Bus P when origin doesn't have it directly
 _BUS_P_HUBS = ["UTOWN", "KR-MRT", "MUSEUM"]
 
