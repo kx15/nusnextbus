@@ -273,6 +273,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
+        BotCommand("start",    "What is this app"),
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
         BotCommand("fav",      "Your favourite stops"),
