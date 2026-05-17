@@ -121,20 +121,12 @@ async def get_directions(
         return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
 
 
-async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
-    """Resolve a free-text location to (lat, lng), biased to Singapore."""
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
-    if not api_key:
-        return None
+async def _geocode_query(address: str, bounds: str, api_key: str) -> Optional[tuple[float, float]]:
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 _GMAPS_GEOCODE,
-                params={
-                    "address": f"{query}, Singapore",
-                    "bounds": _SG_BOUNDS,
-                    "key": api_key,
-                },
+                params={"address": address, "bounds": bounds, "key": api_key},
                 timeout=10.0,
             )
             resp.raise_for_status()
@@ -145,3 +137,21 @@ async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
         return loc["lat"], loc["lng"]
     except Exception:
         return None
+
+
+async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
+    """
+    Resolve a free-text location to (lat, lng).
+    Tries Singapore-wide first; if that fails, retries with 'NUS' appended
+    so campus codes like LT28, COM1, E1A resolve correctly.
+    """
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        return None
+
+    result = await _geocode_query(f"{query}, Singapore", _SG_BOUNDS, api_key)
+    if result:
+        return result
+
+    # Fallback: campus-specific names (e.g. LT28, E1, CELC)
+    return await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
