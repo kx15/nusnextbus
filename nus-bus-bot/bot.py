@@ -678,6 +678,32 @@ async def plan_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 
+async def debugplan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hidden debug: calls transit API from a fixed off-campus point to KR-MRT and dumps result."""
+    import os as _os
+    key = _os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not key:
+        await update.message.reply_text("GOOGLE_MAPS_API_KEY not set")
+        return
+
+    await update.message.reply_text("calling Directions API…")
+    result = await get_transit_to_stop(
+        1.3521, 103.8198,  # Singapore city centre
+        "Kent Ridge MRT Station, Singapore",
+        1.2975, 103.7847,
+    )
+    lines = [
+        f"key: SET ({key[:8]}…)",
+        f"mode: {result.get('mode')}",
+        f"duration: {result.get('duration')}",
+        f"distance: {result.get('distance')}",
+        f"steps: {len(result.get('steps', []))}",
+    ]
+    for i, s in enumerate(result.get("steps", []), 1):
+        lines.append(f"{i}. {s['instruction']} ({s['distance']})")
+    await update.message.reply_text("\n".join(lines) or "empty result")
+
+
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
         BotCommand("start",    "What is this app"),
@@ -723,8 +749,9 @@ def main() -> None:
     app.add_handler(CommandHandler("help",     help_command))
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
-    app.add_handler(CommandHandler("arrivals",  arrivals_command))
-    app.add_handler(CommandHandler("direction", direction_command))
+    app.add_handler(CommandHandler("arrivals",   arrivals_command))
+    app.add_handler(CommandHandler("direction",  direction_command))
+    app.add_handler(CommandHandler("debugplan",  debugplan_command))
     app.add_handler(nearby_handler)
     app.add_handler(plan_handler)
     app.add_handler(CommandHandler("fav",      fav_command))
