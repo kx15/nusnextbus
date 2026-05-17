@@ -600,11 +600,9 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "KV", "CG", "OTH", "BG-MRT", "KR-MRT", "UHC-OPP", "UTOWN", "KV",
     ],
 
-    # R1 API-confirmed: AS5, BIZ2, CLB, KV, LT13, MUSEUM, PGP, UTOWN, YIH
+    # R1 confirmed route (user-verified):
     "R1": [
-        "CLB", "LT13", "BIZ2", "AS5", "YIH", "PGP", "MUSEUM",
-        "UTOWN", "KV",
-        "MUSEUM", "PGP", "YIH", "AS5", "BIZ2", "LT13", "CLB",
+        "KV", "MUSEUM", "UTOWN", "YIH", "CLB", "LT13", "AS5", "BIZ2", "PGP",
     ],
 
     # R2 API-confirmed: HSSML-OPP, IT, KV, LT13-OPP, NUSS-OPP, PGP, RAFFLES,
