@@ -663,15 +663,12 @@ async def _route_on_campus(
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
     # Use the stop caption as destination text when it's a named stop — GPS coords
     # reverse-geocode to street addresses (e.g. "38 Dover Rd") instead of stop names
-    dest_addr = (
-        _quote(f"{dest_stop['caption']} NUS Singapore")
-        if dest_is_exact_stop
-        else f"{dest_lat},{dest_lng}"
-    )
+    # Always use coordinates for destination — NUS stop names like "College Green"
+    # resolve to wrong locations when passed as text to Google Maps
     maps_url = (
         f"https://www.google.com/maps/dir/?api=1"
         f"&origin={origin_addr}"
-        f"&destination={dest_addr}"
+        f"&destination={dest_lat},{dest_lng}"
         f"&travelmode={'transit' if is_bt else 'walking'}"
     )
 
