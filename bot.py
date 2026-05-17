@@ -574,14 +574,11 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "KRB",
     ],
 
-    # D1 API-confirmed: AS5, BIZ2, CLB, COM3, HSSML-OPP, IT, LT13, LT13-OPP,
-    #                   MUSEUM, NUSS-OPP, UTOWN, YIH, YIH-OPP
+    # D1 confirmed route (user-verified):
     "D1": [
-        "COM3", "BIZ2", "HSSML-OPP", "NUSS-OPP", "CLB",
-        "LT13-OPP", "IT", "LT13", "AS5", "YIH", "YIH-OPP", "MUSEUM",
-        "UTOWN",
-        "MUSEUM", "YIH-OPP", "YIH", "AS5", "LT13", "IT", "LT13-OPP",
-        "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "COM3",
+        "COM3", "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "IT",
+        "YIH-OPP", "MUSEUM", "UTOWN",
+        "YIH", "CLB", "LT13", "AS5", "BIZ2", "COM3",
     ],
 
     # D2 API-confirmed: COM3, KR-MRT, KR-MRT-OPP, LT27, MUSEUM, PGP, PGPR, S17,
