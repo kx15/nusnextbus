@@ -286,10 +286,14 @@ async def geocode_with_candidates(
                 places = result
                 break
 
+    import re as _re
     on_campus  = next((r for r in [sg, nus, places] if r and _on_campus(*r)), None)
     off_campus = sg if sg and not _on_campus(*sg) else None
 
-    if on_campus and off_campus:
+    # Building codes (LT24, AS6, E3A, COM1 …) are unambiguously NUS — no disambiguation
+    is_building_code = bool(_re.match(r'^[A-Za-z]{1,4}\d+[A-Za-z]?$', query.strip()))
+
+    if on_campus and off_campus and not is_building_code:
         dist = haversine_m(on_campus[0], on_campus[1], off_campus[0], off_campus[1])
         if dist > 300:
             return on_campus, [
