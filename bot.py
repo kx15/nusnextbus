@@ -939,7 +939,7 @@ def main() -> None:
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals",   arrivals_command))
-    app.add_handler(CommandHandler("direction",  direction_command))
+    app.add_handler(CommandHandler(["direction", "destination"],  direction_command))
     app.add_handler(CommandHandler("bus",        bus_command))
     app.add_handler(CommandHandler("debugplan",  debugplan_command))
     app.add_handler(nearby_handler)
