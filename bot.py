@@ -605,13 +605,10 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "KV", "MUSEUM", "UTOWN", "YIH", "CLB", "LT13", "AS5", "BIZ2", "PGP",
     ],
 
-    # R2 API-confirmed: HSSML-OPP, IT, KV, LT13-OPP, NUSS-OPP, PGP, RAFFLES,
-    #                   UTOWN, YIH-OPP
-    # PGPR is NOT R2 (PGPR: A2, D2, K only)
+    # R2 confirmed route (user-verified):
     "R2": [
-        "PGP", "IT", "LT13-OPP", "NUSS-OPP", "HSSML-OPP", "YIH-OPP",
-        "UTOWN", "RAFFLES", "KV",
-        "UTOWN", "YIH-OPP", "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "IT", "PGP",
+        "PGP", "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "IT",
+        "YIH-OPP", "UTOWN", "RAFFLES", "KV",
     ],
 }
 
