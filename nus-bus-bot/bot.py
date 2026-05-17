@@ -718,7 +718,8 @@ async def _route_on_campus(
             for t in origin_arrivals.timings:
                 if t.name == "P":
                     lines.append(f"*① {origin['caption']} → {hub_stop['caption']} (Bus P)*")
-                    lines.append(f"  Take *P* — {_fmt_time(t.arrival_time)} | Next: {_fmt_time(t.next_arrival_time)}")
+                    lines.append("  " + _fmt_nus_shuttle("P", origin, hub_stop,
+                                                          t.arrival_time, t.next_arrival_time))
                     break
             lines.append("")
 
@@ -759,14 +760,16 @@ async def _route_on_campus(
             for t in origin_arrivals.timings:
                 if t.name == step1:
                     lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")
-                    lines.append(f"  Take *{step1}* — {_fmt_time(t.arrival_time)} | Next: {_fmt_time(t.next_arrival_time)}")
+                    lines.append("  " + _fmt_nus_shuttle(step1, origin, hub_stop,
+                                                          t.arrival_time, t.next_arrival_time))
                     break
             lines.append("")
 
             for t in hub_arr.timings:
                 if t.name == "P":
                     lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']} (Bus P)*")
-                    lines.append(f"  Take *P* — {_fmt_time(t.arrival_time)} | Next: {_fmt_time(t.next_arrival_time)}")
+                    lines.append("  " + _fmt_nus_shuttle("P", hub_stop, dest_stop,
+                                                          t.arrival_time, t.next_arrival_time))
                     break
             lines.append("")
             lines.append(f"[open in Google Maps]({maps_url})")
