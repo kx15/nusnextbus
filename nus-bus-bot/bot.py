@@ -349,8 +349,26 @@ async def _resolve_location(query: str) -> tuple:
 
 async def _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact) -> None:
     """Resolve and send the plan message given resolved origin/destination data."""
+    import os as _os
+    has_key = bool(_os.environ.get("GOOGLE_MAPS_API_KEY", ""))
+    logger.info(
+        "_run_plan: o_stop=%s d_stop=%s o=(%.4f,%.4f) d=(%.4f,%.4f) gmaps_key=%s",
+        o_stop["name"] if o_stop else None,
+        d_stop["name"] if d_stop else None,
+        o_lat, o_lng, d_lat, d_lng,
+        "SET" if has_key else "MISSING",
+    )
+
     if o_stop and d_stop and d_stop["name"] == o_stop["name"]:
         await update.message.reply_text("that's the same place lol 💀")
+        return
+
+    if not has_key:
+        await update.message.reply_text(
+            "⚠️ Google Maps API key not configured — directions unavailable.\n"
+            "Set GOOGLE\\_MAPS\\_API\\_KEY in Railway Variables.",
+            parse_mode="Markdown",
+        )
         return
 
     msg = await update.message.reply_text("planning your route one sec 👀")
@@ -359,13 +377,17 @@ async def _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng,
         lines = [f"🗺 *{o_label} → {d_label}*\n"]
 
         if o_stop and d_stop:
+            logger.info("routing: on-campus %s → %s", o_stop["name"], d_stop["name"])
             await _route_on_campus(lines, o_stop, origin_loc, d_stop, d_lat, d_lng, d_is_exact)
         elif d_stop:
+            logger.info("routing: off-campus → %s", d_stop["name"])
             await _route_offcampus_to_campus(lines, origin_loc, d_stop, d_lat, d_lng, d_is_exact)
         else:
+            logger.info("routing: generic transit/walk")
             directions = await get_directions(o_lat, o_lng, d_lat, d_lng)
             _append_directions_block(lines, directions)
 
+        logger.info("message lines: %d  preview: %s", len(lines), lines[1] if len(lines) > 1 else "")
         await msg.edit_text("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
     except Exception:
         logger.exception("Plan failed")
