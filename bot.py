@@ -461,12 +461,18 @@ async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng
 
         if o_stop and d_stop:
             # When destination is a building (not exact stop), check nearby stops
-            # and pick the one reachable in fewest bus stops — e.g. S15 is 68m from
-            # S17 but LT27 (87m) is reachable in 1 stop vs 8 stops from KR-MRT.
+            # and pick the one reachable in fewest bus stops from the effective origin.
+            # For BT campus origins (OTH/CG/BG-MRT), the journey always transfers
+            # through KR-MRT — use that as the effective origin for optimisation.
             if not d_is_exact:
                 candidates = nearby_stops(d_lat, d_lng, radius_m=200)
                 if len(candidates) > 1:
-                    better = _best_dest_stop(o_stop["name"], candidates)
+                    eff_origin = (
+                        "KR-MRT"
+                        if o_stop["name"] in _BUKIT_TIMAH_STOPS
+                        else o_stop["name"]
+                    )
+                    better = _best_dest_stop(eff_origin, candidates)
                     if better:
                         d_stop = better
             logger.info("routing: on-campus %s → %s", o_stop["name"], d_stop["name"])
