@@ -563,15 +563,13 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "LT27", "UHALL", "UHC-OPP", "YIH",
         "CLB", "BIZ2", "AS5", "LT13", "KR-MRT",
     ],
-    # A2 confirmed stops: KR-MRT(-OPP end), LT13-OPP, HSSML-OPP, NUSS-OPP, IT,
-    #   TCOMS, S17, LT27, KRB, PGP, PGPR, UHALL-OPP, UHC, YIH-OPP, MUSEUM, UTOWN,
-    #   KV, BG-MRT
+    # A2 confirmed stops (API-verified): HSSML-OPP, IT, KR-MRT-OPP, KRB, LT13-OPP,
+    #   MUSEUM, NUSS-OPP, PGPR, S17, TCOMS, UHALL-OPP, UHC, YIH-OPP
     "A2": [
-        "BG-MRT", "KV", "MUSEUM", "UTOWN",
-        "YIH-OPP", "UHC", "UHALL-OPP", "TCOMS",
-        "S17", "LT27", "KRB", "PGP", "PGPR",
-        "IT", "LT13-OPP", "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "AS5", "LT13",
-        "KR-MRT",
+        "KR-MRT-OPP", "PGPR", "S17",
+        "UHALL-OPP", "UHC", "YIH-OPP", "MUSEUM",
+        "TCOMS", "IT", "LT13-OPP", "NUSS-OPP", "HSSML-OPP",
+        "KRB", "KR-MRT-OPP",
     ],
     # D1 confirmed stops: COM3, BIZ2, HSSML-OPP, NUSS-OPP, CLB, LT13-OPP, IT,
     #   LT13, AS5, YIH, YIH-OPP, MUSEUM, UTOWN
