@@ -663,9 +663,12 @@ async def _route_on_campus(
         _fmt_steps(lines, walk.get("steps", []))
         lines.append("")
 
+    from urllib.parse import quote as _quote
+    # Use stop/place names so Google Maps shows meaningful labels, not raw addresses
+    origin_addr = _quote(f"{origin['caption']} NUS Singapore")
     maps_url = (
         f"https://www.google.com/maps/dir/?api=1"
-        f"&origin={origin_loc[0]},{origin_loc[1]}"
+        f"&origin={origin_addr}"
         f"&destination={dest_lat},{dest_lng}&travelmode=walking"
     )
     lines.append(f"[open in Google Maps]({maps_url})")
