@@ -595,11 +595,9 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "MUSEUM", "UHC", "UHALL-OPP", "S17", "KR-MRT-OPP", "PGP",
     ],
 
-    # P API-confirmed: BG-MRT, CG, KR-MRT, KV, OTH, UHC-OPP, UTOWN
-    # MUSEUM is NOT P (fresh API: P: BG-MRT, CG, KR-MRT, KV, OTH, UHC-OPP, UTOWN)
+    # P confirmed route (user-verified):
     "P": [
-        "KR-MRT", "UHC-OPP", "UTOWN", "CG", "OTH", "BG-MRT", "KV",
-        "UTOWN", "UHC-OPP", "KR-MRT",
+        "KV", "CG", "OTH", "BG-MRT", "KR-MRT", "UHC-OPP", "UTOWN", "KV",
     ],
 
     # R1 API-confirmed: AS5, BIZ2, CLB, KV, LT13, MUSEUM, PGP, UTOWN, YIH
