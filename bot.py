@@ -333,19 +333,18 @@ async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     loc = update.message.location
     stops = nearby_stops(loc.latitude, loc.longitude, radius_m=800)
-    if not stops:
-        await update.message.reply_text(
-            "you don't seem to be on NUS campus 💀\ntry /plan again from within NUS",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ConversationHandler.END
+    origin = stops[0] if stops else None
 
-    origin = stops[0]
     context.user_data["plan_origin"] = origin
     context.user_data["plan_origin_loc"] = (loc.latitude, loc.longitude)
 
+    if origin:
+        caption = f"📍 nearest NUS stop: *{origin['caption']}*\n\n"
+    else:
+        caption = "📍 got your location\n\n"
+
     await update.message.reply_text(
-        f"📍 nearest stop: *{origin['caption']}*\n\nwhere are you going? 🏫\n_type a place or stop name_",
+        f"{caption}where are you going? 🏫\n_type a place or stop name_",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -356,7 +355,7 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     origin = context.user_data.get("plan_origin")
     origin_loc = context.user_data.get("plan_origin_loc")
 
-    if not origin:
+    if not origin_loc:
         await update.message.reply_text("something went wrong, try /plan again")
         return ConversationHandler.END
 
@@ -392,7 +391,7 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return PLAN_DEST
 
-    if dest_stop and dest_stop["name"] == origin["name"]:
+    if origin and dest_stop and dest_stop["name"] == origin["name"]:
         await update.message.reply_text(
             "that's where you already are lol 💀\nwhere do you actually wanna go?"
         )
@@ -401,8 +400,8 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     msg = await update.message.reply_text("planning your route one sec 👀")
 
     try:
-        # Only fetch NUS shuttle arrivals when destination has a nearby campus stop
-        if dest_stop:
+        # Only fetch NUS shuttle arrivals when both origin and destination have a nearby campus stop
+        if origin and dest_stop:
             origin_arrivals, dest_arrivals, directions = await asyncio.gather(
                 get_arrivals_async(origin["name"]),
                 get_arrivals_async(dest_stop["name"]),
@@ -413,9 +412,10 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             origin_arrivals = dest_arrivals = None
             directions = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
 
-        lines = [f"🗺 *{origin['caption']} → {dest_label}*\n"]
+        origin_label = origin["caption"] if origin else "your location"
+        lines = [f"🗺 *{origin_label} → {dest_label}*\n"]
 
-        if dest_stop and not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
+        if origin and dest_stop and not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
             origin_names = {t.name for t in origin_arrivals.timings if not t.name.strip().isdigit()}
             dest_names   = {t.name for t in dest_arrivals.timings   if not t.name.strip().isdigit()}
             common = origin_names & dest_names
