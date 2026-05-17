@@ -43,94 +43,135 @@ def _maps_link(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: 
     )
 
 
+def _extract_walking_steps(leg: dict) -> list:
+    steps = []
+    for s in leg.get("steps", []):
+        try:
+            steps.append({
+                "instruction": _strip_html(s.get("html_instructions", "")),
+                "distance": s.get("distance", {}).get("text", ""),
+            })
+        except Exception:
+            pass
+    return steps
+
+
+def _extract_transit_steps(leg: dict) -> list:
+    steps = []
+    for s in leg.get("steps", []):
+        try:
+            travel = s.get("travel_mode", "")
+            dur    = s.get("duration", {}).get("text", "")
+            dist   = s.get("distance", {}).get("text", "")
+            if travel == "WALKING":
+                steps.append({
+                    "instruction": f"🚶 Walk {dist}" if dist else "🚶 Walk",
+                    "distance": dur,
+                })
+            elif travel == "TRANSIT":
+                td        = s.get("transit_details", {})
+                line      = td.get("line", {})
+                name      = line.get("short_name") or line.get("name", "bus/MRT")
+                dep       = td.get("departure_stop", {}).get("name", "")
+                arr       = td.get("arrival_stop", {}).get("name", "")
+                num_stops = td.get("num_stops", "")
+                vehicle   = line.get("vehicle", {}).get("type", "")
+                icon      = "🚇" if vehicle in ("SUBWAY", "RAIL", "HEAVY_RAIL", "TRAM") else "🚌"
+                route     = f" {dep} → {arr}" if dep and arr else ""
+                stops_txt = f" ({num_stops} stops)" if num_stops else ""
+                steps.append({
+                    "instruction": f"{icon} Take {name}{route}{stops_txt}",
+                    "distance": dur,
+                })
+        except Exception:
+            pass
+    return steps
+
+
+async def _call_directions(origin: str, destination: str, mode: str, api_key: str) -> Optional[dict]:
+    """Raw Directions API call. Returns parsed leg dict or None."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                _GMAPS_DIRECTIONS,
+                params={"origin": origin, "destination": destination, "mode": mode, "key": api_key},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("status") != "OK" or not data.get("routes"):
+            return None
+        return data["routes"][0]["legs"][0]
+    except Exception:
+        return None
+
+
 async def get_directions(
     origin_lat: float,
     origin_lng: float,
     dest_lat: float,
     dest_lng: float,
 ) -> dict:
-    """
-    Returns a directions dict. Uses walking for short trips (< 2 km),
-    transit for longer ones. maps_url and mode are always set.
-    """
+    """Walking for short trips (< 2 km), transit for longer ones."""
     dist_m = haversine_m(origin_lat, origin_lng, dest_lat, dest_lng)
-    mode = "transit" if dist_m > _TRANSIT_THRESHOLD_M else "walking"
+    mode   = "transit" if dist_m > _TRANSIT_THRESHOLD_M else "walking"
     maps_url = _maps_link(origin_lat, origin_lng, dest_lat, dest_lng, mode)
 
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
         return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                _GMAPS_DIRECTIONS,
-                params={
-                    "origin": f"{origin_lat},{origin_lng}",
-                    "destination": f"{dest_lat},{dest_lng}",
-                    "mode": mode,
-                    "key": api_key,
-                },
-                timeout=10.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        if data.get("status") != "OK" or not data.get("routes"):
-            return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
-
-        leg = data["routes"][0]["legs"][0]
-
-        if mode == "walking":
-            steps = []
-            for s in leg.get("steps", []):
-                try:
-                    steps.append({
-                        "instruction": _strip_html(s.get("html_instructions", "")),
-                        "distance": s.get("distance", {}).get("text", ""),
-                    })
-                except Exception:
-                    pass
-        else:
-            # Transit: one entry per leg (walk segment or transit vehicle)
-            steps = []
-            for s in leg.get("steps", []):
-                try:
-                    travel = s.get("travel_mode", "")
-                    dur    = s.get("duration", {}).get("text", "")
-                    dist   = s.get("distance", {}).get("text", "")
-                    if travel == "WALKING":
-                        steps.append({
-                            "instruction": f"🚶 Walk {dist}" if dist else "🚶 Walk",
-                            "distance": dur,
-                        })
-                    elif travel == "TRANSIT":
-                        td        = s.get("transit_details", {})
-                        line      = td.get("line", {})
-                        name      = line.get("short_name") or line.get("name", "bus/MRT")
-                        dep       = td.get("departure_stop", {}).get("name", "")
-                        arr       = td.get("arrival_stop", {}).get("name", "")
-                        num_stops = td.get("num_stops", "")
-                        vehicle   = line.get("vehicle", {}).get("type", "")
-                        icon      = "🚇" if vehicle in ("SUBWAY", "RAIL", "HEAVY_RAIL", "TRAM") else "🚌"
-                        route     = f" {dep} → {arr}" if dep and arr else ""
-                        stops_txt = f" ({num_stops} stops)" if num_stops else ""
-                        steps.append({
-                            "instruction": f"{icon} Take {name}{route}{stops_txt}",
-                            "distance": dur,
-                        })
-                except Exception:
-                    pass
-
-        return {
-            "maps_url": maps_url,
-            "mode": mode,
-            "duration": leg["duration"]["text"],
-            "distance": leg["distance"]["text"],
-            "steps": steps,
-        }
-    except Exception:
+    leg = await _call_directions(f"{origin_lat},{origin_lng}", f"{dest_lat},{dest_lng}", mode, api_key)
+    if not leg:
         return {"maps_url": maps_url, "mode": mode, "duration": None, "distance": None, "steps": []}
+
+    steps = _extract_walking_steps(leg) if mode == "walking" else _extract_transit_steps(leg)
+    return {
+        "maps_url": maps_url,
+        "mode": mode,
+        "duration": leg.get("duration", {}).get("text"),
+        "distance": leg.get("distance", {}).get("text"),
+        "steps": steps,
+    }
+
+
+async def get_transit_to_stop(
+    origin_lat: float,
+    origin_lng: float,
+    dest_address: str,
+    dest_lat: float,
+    dest_lng: float,
+) -> dict:
+    """
+    Transit directions to a named stop/address (much more reliable than GPS coords
+    for MRT stations). Falls back to walking if transit returns no results.
+    """
+    maps_url = _maps_link(origin_lat, origin_lng, dest_lat, dest_lng, "transit")
+    api_key  = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        return {"maps_url": maps_url, "mode": "transit", "duration": None, "distance": None, "steps": []}
+
+    origin = f"{origin_lat},{origin_lng}"
+
+    leg = await _call_directions(origin, dest_address, "transit", api_key)
+    if not leg:
+        # Fallback: try walking (user might be very close)
+        leg = await _call_directions(origin, dest_address, "walking", api_key)
+        if not leg:
+            return {"maps_url": maps_url, "mode": "transit", "duration": None, "distance": None, "steps": []}
+        steps = _extract_walking_steps(leg)
+        mode  = "walking"
+    else:
+        steps = _extract_transit_steps(leg)
+        mode  = "transit"
+
+    return {
+        "maps_url": maps_url,
+        "mode": mode,
+        "duration": leg.get("duration", {}).get("text"),
+        "distance": leg.get("distance", {}).get("text"),
+        "steps": steps,
+    }
 
 
 async def _geocode_query(address: str, bounds: str, api_key: str) -> Optional[tuple[float, float]]:
