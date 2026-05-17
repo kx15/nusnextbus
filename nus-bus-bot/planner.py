@@ -135,6 +135,7 @@ async def get_directions(
         "mode": mode,
         "duration": leg.get("duration", {}).get("text"),
         "distance": leg.get("distance", {}).get("text"),
+        "distance_m": leg.get("distance", {}).get("value", 0),  # raw metres
         "steps": steps,
     }
 
@@ -174,6 +175,7 @@ async def get_transit_to_stop(
         "mode": mode,
         "duration": leg.get("duration", {}).get("text"),
         "distance": leg.get("distance", {}).get("text"),
+        "distance_m": leg.get("distance", {}).get("value", 0),
         "steps": steps,
     }
 
