@@ -555,24 +555,29 @@ _GATEWAYS = [
 # Stop membership verified against NUS NextBus API (/ShuttleService per stop).
 # Direction order is best-estimate geographic; count may be ±1 for edge cases.
 _NUS_ROUTES: dict[str, list[str]] = {
-    # A1 confirmed stops: KR-MRT, LT13, AS5, BIZ2, CLB, KRB, LT27, PGP,
-    #   TCOMS-OPP, UHALL, UHC-OPP, YIH
+    # All routes rebuilt from NUS NextBus API — every stop membership verified.
+    # Stop order is best-estimate geographic; counts may be ±1 for edge cases.
+
+    # A1 API-confirmed: AS5, BIZ2, CLB, KR-MRT, KRB, LT13, LT27, PGP,
+    #                   TCOMS-OPP, UHALL, UHC-OPP, YIH
+    # Route order confirmed from live timing: UHALL→UHC-OPP→YIH→CLB→KRB (2 min gap)
+    # KRB is the official start; bus goes south campus first, then north back to KRB.
     "A1": [
-        "KR-MRT", "LT13", "AS5", "BIZ2", "CLB",
-        "TCOMS-OPP", "PGP", "KRB",
-        "LT27", "UHALL", "UHC-OPP", "YIH",
-        "CLB", "BIZ2", "AS5", "LT13", "KR-MRT",
+        "KRB", "LT13", "AS5", "BIZ2", "TCOMS-OPP", "PGP",
+        "KR-MRT", "LT27", "UHALL", "UHC-OPP", "YIH", "CLB", "KRB",
     ],
-    # A2 confirmed stops (API-verified): HSSML-OPP, IT, KR-MRT-OPP, KRB, LT13-OPP,
-    #   MUSEUM, NUSS-OPP, PGPR, S17, TCOMS, UHALL-OPP, UHC, YIH-OPP
+
+    # A2 API-confirmed: HSSML-OPP, IT, KR-MRT-OPP, KRB, LT13-OPP, MUSEUM,
+    #                   NUSS-OPP, PGPR, S17, TCOMS, UHALL-OPP, UHC, YIH-OPP
     "A2": [
         "KR-MRT-OPP", "PGPR", "S17",
         "UHALL-OPP", "UHC", "YIH-OPP", "MUSEUM",
         "TCOMS", "IT", "LT13-OPP", "NUSS-OPP", "HSSML-OPP",
         "KRB", "KR-MRT-OPP",
     ],
-    # D1 confirmed stops: COM3, BIZ2, HSSML-OPP, NUSS-OPP, CLB, LT13-OPP, IT,
-    #   LT13, AS5, YIH, YIH-OPP, MUSEUM, UTOWN
+
+    # D1 API-confirmed: AS5, BIZ2, CLB, COM3, HSSML-OPP, IT, LT13, LT13-OPP,
+    #                   MUSEUM, NUSS-OPP, UTOWN, YIH, YIH-OPP
     "D1": [
         "COM3", "BIZ2", "HSSML-OPP", "NUSS-OPP", "CLB",
         "LT13-OPP", "IT", "LT13", "AS5", "YIH", "YIH-OPP", "MUSEUM",
@@ -580,43 +585,50 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "MUSEUM", "YIH-OPP", "YIH", "AS5", "LT13", "IT", "LT13-OPP",
         "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "COM3",
     ],
-    # D2 confirmed stops: COM3, TCOMS, TCOMS-OPP, S17, LT27, KRB, PGPR, PGP,
-    #   UHALL-OPP, UHALL, UHC, UHC-OPP, UTOWN, KR-MRT-OPP, KR-MRT
+
+    # D2 API-confirmed: COM3, KR-MRT, KR-MRT-OPP, LT27, MUSEUM, PGP, PGPR, S17,
+    #                   TCOMS, TCOMS-OPP, UHALL, UHALL-OPP, UHC, UHC-OPP, UTOWN
+    # KRB is NOT D2 (KRB: A1, A2 only)
     "D2": [
-        "COM3", "TCOMS-OPP", "TCOMS", "S17", "LT27", "KRB", "PGPR", "PGP",
-        "UHALL-OPP", "UHALL", "UHC", "UHC-OPP",
+        "COM3", "TCOMS-OPP", "TCOMS", "S17", "LT27", "PGPR", "PGP",
+        "UHALL-OPP", "UHALL", "UHC", "UHC-OPP", "MUSEUM",
         "UTOWN", "KR-MRT-OPP", "KR-MRT",
-        "UTOWN", "UHC-OPP", "UHC", "UHALL", "UHALL-OPP",
-        "PGP", "PGPR", "KRB", "LT27", "S17", "TCOMS", "TCOMS-OPP", "COM3",
+        "UTOWN", "MUSEUM", "UHC-OPP", "UHC", "UHALL", "UHALL-OPP",
+        "PGP", "PGPR", "LT27", "S17", "TCOMS", "TCOMS-OPP", "COM3",
     ],
-    # K confirmed stops: KR-MRT, LT13, AS5, SDE3-OPP, YIH, CLB, JP-SCH-16151,
-    #   KR-MRT-OPP, UHALL-OPP, UHALL, UHC, UHC-OPP, PGP, PGPR, KRB, LT27, S17,
-    #   MUSEUM, UTOWN, KV, BG-MRT
-    # Note: LT13-OPP is NOT K
+
+    # K API-confirmed: CLB, JP-SCH-16151, KR-MRT, KR-MRT-OPP, KV, LT27, MUSEUM,
+    #                  PGP, PGPR, S17, SDE3-OPP, UHALL, UHALL-OPP, UHC, UHC-OPP, YIH
+    # NOT K: LT13, AS5, KRB, UTOWN, BG-MRT
     "K": [
-        "KR-MRT", "LT13", "AS5", "SDE3-OPP", "YIH", "CLB",
+        "KR-MRT", "SDE3-OPP", "YIH", "CLB",
         "JP-SCH-16151", "KR-MRT-OPP",
         "UHALL-OPP", "UHC", "UHALL", "UHC-OPP",
-        "PGP", "PGPR", "KRB", "LT27", "S17",
-        "MUSEUM", "UTOWN", "KV", "BG-MRT",
+        "PGP", "PGPR", "LT27", "S17",
+        "MUSEUM", "KV", "KR-MRT",
     ],
-    # P confirmed stops: KR-MRT, UHC-OPP, UTOWN, CG, OTH, BG-MRT, KV, MUSEUM
+
+    # P API-confirmed: BG-MRT, CG, KR-MRT, KV, OTH, UHC-OPP, UTOWN
+    # MUSEUM is NOT P (fresh API: P: BG-MRT, CG, KR-MRT, KV, OTH, UHC-OPP, UTOWN)
     "P": [
         "KR-MRT", "UHC-OPP", "UTOWN", "CG", "OTH", "BG-MRT", "KV",
-        "MUSEUM", "UTOWN", "UHC-OPP", "KR-MRT",
+        "UTOWN", "UHC-OPP", "KR-MRT",
     ],
-    # R1 confirmed stops: CLB, LT13, BIZ2, AS5, YIH, MUSEUM, UTOWN, KV, PGP
-    # Note: LT13-OPP is NOT R1
+
+    # R1 API-confirmed: AS5, BIZ2, CLB, KV, LT13, MUSEUM, PGP, UTOWN, YIH
     "R1": [
-        "CLB", "LT13", "BIZ2", "AS5", "YIH", "MUSEUM",
-        "UTOWN", "KV", "MUSEUM", "YIH", "AS5", "BIZ2", "LT13", "CLB",
+        "CLB", "LT13", "BIZ2", "AS5", "YIH", "PGP", "MUSEUM",
+        "UTOWN", "KV",
+        "MUSEUM", "PGP", "YIH", "AS5", "BIZ2", "LT13", "CLB",
     ],
-    # R2 confirmed stops: PGP, PGPR, IT, LT13-OPP, NUSS-OPP, HSSML-OPP,
-    #   UTOWN, RAFFLES, KV
+
+    # R2 API-confirmed: HSSML-OPP, IT, KV, LT13-OPP, NUSS-OPP, PGP, RAFFLES,
+    #                   UTOWN, YIH-OPP
+    # PGPR is NOT R2 (PGPR: A2, D2, K only)
     "R2": [
-        "PGP", "PGPR", "IT", "LT13-OPP", "NUSS-OPP", "HSSML-OPP",
+        "PGP", "IT", "LT13-OPP", "NUSS-OPP", "HSSML-OPP", "YIH-OPP",
         "UTOWN", "RAFFLES", "KV",
-        "UTOWN", "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "IT", "PGPR", "PGP",
+        "UTOWN", "YIH-OPP", "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "IT", "PGP",
     ],
 }
 
