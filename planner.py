@@ -1,7 +1,16 @@
+import html as _html
 import os
+import re
 from typing import Optional
 
 import httpx
+
+
+def _strip_html(text: str) -> str:
+    text = _html.unescape(text)
+    text = re.sub(r"<div[^>]*>", " — ", text)  # <div> used for sub-instructions
+    text = re.sub(r"<[^>]+>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 _GMAPS_DIRECTIONS = "https://maps.googleapis.com/maps/api/directions/json"
 _GMAPS_GEOCODE    = "https://maps.googleapis.com/maps/api/geocode/json"
@@ -53,10 +62,18 @@ async def get_walking_directions(
             return {"maps_url": maps_url, "duration": None, "distance": None}
 
         leg = data["routes"][0]["legs"][0]
+        steps = [
+            {
+                "instruction": _strip_html(s["html_instructions"]),
+                "distance": s["distance"]["text"],
+            }
+            for s in leg.get("steps", [])
+        ]
         return {
             "maps_url": maps_url,
             "duration": leg["duration"]["text"],
             "distance": leg["distance"]["text"],
+            "steps": steps,
         }
     except Exception:
         return {"maps_url": maps_url, "duration": None, "distance": None}
