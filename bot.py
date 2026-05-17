@@ -131,6 +131,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /all — every bus on campus rn\n"
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
         "• /plan — route planner (share location → type destination)\n"
+        "• /direction `<from> to <dest>` — quick plan e.g. `/direction CLB to UTOWN`\n"
         "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
         "• /help — what is this app",
@@ -333,12 +334,84 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_reply_markup(reply_markup=keyboard)
 
 
+async def _resolve_location(query: str) -> tuple:
+    """Return (nus_stop | None, lat, lng, label, is_exact_stop)."""
+    stop = find_stop(query)
+    if stop:
+        return stop, stop["lat"], stop["lng"], stop["caption"], True
+    coords = await geocode_sg(query)
+    if coords:
+        lat, lng = coords
+        nearby = nearby_stops(lat, lng, radius_m=800)
+        return (nearby[0] if nearby else None), lat, lng, query, False
+    return None, None, None, query, False
+
+
+async def _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact) -> None:
+    """Resolve and send the plan message given resolved origin/destination data."""
+    if o_stop and d_stop and d_stop["name"] == o_stop["name"]:
+        await update.message.reply_text("that's the same place lol 💀")
+        return
+
+    msg = await update.message.reply_text("planning your route one sec 👀")
+    try:
+        origin_loc = (o_lat, o_lng)
+        lines = [f"🗺 *{o_label} → {d_label}*\n"]
+
+        if o_stop and d_stop:
+            await _route_on_campus(lines, o_stop, origin_loc, d_stop, d_lat, d_lng, d_is_exact)
+        elif d_stop:
+            await _route_offcampus_to_campus(lines, origin_loc, d_stop, d_lat, d_lng, d_is_exact)
+        else:
+            directions = await get_directions(o_lat, o_lng, d_lat, d_lng)
+            _append_directions_block(lines, directions)
+
+        await msg.edit_text("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+    except Exception:
+        logger.exception("Plan failed")
+        await msg.edit_text("something broke 💀 try again")
+
+
 async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "where are you? 📍",
         reply_markup=_location_keyboard(),
     )
     return PLAN_ORIGIN
+
+
+async def direction_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = " ".join(context.args).strip() if context.args else ""
+    if " to " not in text.lower():
+        await update.message.reply_text(
+            "Usage: `/direction <from> to <destination>`\ne.g. `/direction CLB to UTOWN`",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Split on the first " to " (case-insensitive)
+    idx = text.lower().index(" to ")
+    o_query = text[:idx].strip()
+    d_query = text[idx + 4:].strip()
+
+    if not o_query or not d_query:
+        await update.message.reply_text(
+            "Usage: `/direction <from> to <destination>`\ne.g. `/direction CLB to UTOWN`",
+            parse_mode="Markdown",
+        )
+        return
+
+    o_stop, o_lat, o_lng, o_label, _ = await _resolve_location(o_query)
+    d_stop, d_lat, d_lng, d_label, d_is_exact = await _resolve_location(d_query)
+
+    if o_lat is None:
+        await update.message.reply_text(f"couldn't find origin: *{o_query}* 😭", parse_mode="Markdown")
+        return
+    if d_lat is None:
+        await update.message.reply_text(f"couldn't find destination: *{d_query}* 😭", parse_mode="Markdown")
+        return
+
+    await _run_plan(update, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact)
 
 
 async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -534,19 +607,7 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             dest_label = dest_stop["caption"]
     else:
         query = update.message.text.strip()
-        dest_stop = find_stop(query)
-        if dest_stop:
-            dest_lat, dest_lng = dest_stop["lat"], dest_stop["lng"]
-            dest_label         = dest_stop["caption"]
-            dest_is_exact_stop = True
-        else:
-            coords = await geocode_sg(query)
-            if coords:
-                dest_lat, dest_lng = coords
-                dest_label = query
-                stops = nearby_stops(dest_lat, dest_lng, radius_m=800)
-                if stops:
-                    dest_stop = stops[0]
+        dest_stop, dest_lat, dest_lng, dest_label, dest_is_exact_stop = await _resolve_location(query)
 
     if dest_lat is None:
         await update.message.reply_text(
@@ -554,37 +615,13 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return PLAN_DEST
 
-    if origin and dest_stop and dest_stop["name"] == origin["name"]:
-        await update.message.reply_text(
-            "that's where you already are lol 💀\nwhere do you actually wanna go?"
-        )
-        return PLAN_DEST
-
-    msg = await update.message.reply_text("planning your route one sec 👀")
-
-    try:
-        origin_label = origin["caption"] if origin else "your location"
-        lines = [f"🗺 *{origin_label} → {dest_label}*\n"]
-
-        if origin and dest_stop:
-            await _route_on_campus(lines, origin, origin_loc, dest_stop, dest_lat, dest_lng, dest_is_exact_stop)
-        elif dest_stop:
-            await _route_offcampus_to_campus(lines, origin_loc, dest_stop, dest_lat, dest_lng, dest_is_exact_stop)
-        else:
-            directions = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
-            _append_directions_block(lines, directions)
-
-        await msg.edit_text(
-            "\n".join(lines),
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
-    except Exception:
-        logger.exception("Plan conversation failed")
-        await msg.edit_text("something broke 💀 try again")
+    origin_label = origin["caption"] if origin else "your location"
+    o_lat, o_lng = origin_loc
 
     context.user_data.pop("plan_origin", None)
     context.user_data.pop("plan_origin_loc", None)
+
+    await _run_plan(update, origin, o_lat, o_lng, origin_label, dest_stop, dest_lat, dest_lng, dest_label, dest_is_exact_stop)
     return ConversationHandler.END
 
 
@@ -600,7 +637,8 @@ async def post_init(app: Application) -> None:
         BotCommand("start",    "What is this app"),
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
-        BotCommand("plan",     "Plan a route to anywhere on campus"),
+        BotCommand("plan",      "Route planner via location sharing"),
+        BotCommand("direction", "Quick route e.g. /direction CLB to UTOWN"),
         BotCommand("nearby",   "Find stops near you 📍"),
         BotCommand("fav",      "Your favourite stops"),
         BotCommand("help",     "Show this message"),
@@ -637,7 +675,8 @@ def main() -> None:
     app.add_handler(CommandHandler("help",     help_command))
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
-    app.add_handler(CommandHandler("arrivals", arrivals_command))
+    app.add_handler(CommandHandler("arrivals",  arrivals_command))
+    app.add_handler(CommandHandler("direction", direction_command))
     app.add_handler(nearby_handler)
     app.add_handler(plan_handler)
     app.add_handler(CommandHandler("fav",      fav_command))
