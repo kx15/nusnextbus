@@ -581,15 +581,11 @@ _NUS_ROUTES: dict[str, list[str]] = {
         "YIH", "CLB", "LT13", "AS5", "BIZ2", "COM3",
     ],
 
-    # D2 API-confirmed: COM3, KR-MRT, KR-MRT-OPP, LT27, MUSEUM, PGP, PGPR, S17,
-    #                   TCOMS, TCOMS-OPP, UHALL, UHALL-OPP, UHC, UHC-OPP, UTOWN
-    # KRB is NOT D2 (KRB: A1, A2 only)
+    # D2 confirmed route (user-verified):
     "D2": [
-        "COM3", "TCOMS-OPP", "TCOMS", "S17", "LT27", "PGPR", "PGP",
-        "UHALL-OPP", "UHALL", "UHC", "UHC-OPP", "MUSEUM",
-        "UTOWN", "KR-MRT-OPP", "KR-MRT",
-        "UTOWN", "MUSEUM", "UHC-OPP", "UHC", "UHALL", "UHALL-OPP",
-        "PGP", "PGPR", "LT27", "S17", "TCOMS", "TCOMS-OPP", "COM3",
+        "COM3", "TCOMS-OPP", "PGP", "KR-MRT",
+        "LT27", "UHALL", "UHC-OPP", "UHALL-OPP",
+        "S17", "KR-MRT-OPP", "PGP", "TCOMS", "COM3",
     ],
 
     # K API-confirmed: CLB, JP-SCH-16151, KR-MRT, KR-MRT-OPP, KV, LT27, MUSEUM,
