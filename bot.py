@@ -132,6 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
         "• /plan — route planner (share location → type destination)\n"
         "• /direction `<from> to <dest>` — quick plan e.g. `/direction CLB to UTOWN`\n"
+        "• /bus `<service>` — NUS bus route e.g. `/bus A1`\n"
         "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
         "• /help — what is this app",
@@ -332,6 +333,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")],
         ])
         await query.edit_message_reply_markup(reply_markup=keyboard)
+    elif data.startswith("bus:"):
+        service = data.split(":", 1)[1]
+        await query.answer()
+        route = _NUS_ROUTES.get(service)
+        if not route:
+            await query.edit_message_text(f"Route not found for {service}")
+            return
+        lines = [f"🚌 *Bus {service} — Route*\n"]
+        for i, stop_name in enumerate(route, 1):
+            stop = find_stop(stop_name)
+            caption = stop["caption"] if stop else stop_name
+            lines.append(f"{i}. {caption}")
+        all_services = sorted(_NUS_ROUTES.keys())
+        buttons = [
+            [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
+            for name in all_services
+        ]
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
 
 
 async def _resolve_location(query: str) -> tuple:
@@ -679,6 +702,39 @@ async def _route_offcampus_to_campus(
     lines.append(f"[open in Google Maps]({maps_url})")
 
 
+async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        # List all services
+        names = sorted(_NUS_ROUTES.keys())
+        buttons = [
+            [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
+            for name in names
+        ]
+        await update.message.reply_text(
+            "🚌 *NUS Bus Services*\nTap a service to see its route:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
+    service = context.args[0].upper()
+    route = _NUS_ROUTES.get(service)
+    if not route:
+        available = ", ".join(sorted(_NUS_ROUTES.keys()))
+        await update.message.reply_text(
+            f"Unknown service *{service}*.\nAvailable: {available}",
+            parse_mode="Markdown",
+        )
+        return
+
+    lines = [f"🚌 *Bus {service} — Route*\n"]
+    for i, stop_name in enumerate(route, 1):
+        stop = find_stop(stop_name)
+        caption = stop["caption"] if stop else stop_name
+        lines.append(f"{i}. {caption}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     origin     = context.user_data.get("plan_origin")
     origin_loc = context.user_data.get("plan_origin_loc")
@@ -759,9 +815,10 @@ async def post_init(app: Application) -> None:
         BotCommand("arrivals", "Select stop to get arrival time"),
         BotCommand("plan",      "Route planner via location sharing"),
         BotCommand("direction", "Quick route e.g. /direction CLB to UTOWN"),
-        BotCommand("nearby",   "Find stops near you 📍"),
-        BotCommand("fav",      "Your favourite stops"),
-        BotCommand("help",     "Show this message"),
+        BotCommand("bus",       "NUS bus route e.g. /bus A1"),
+        BotCommand("nearby",    "Find stops near you 📍"),
+        BotCommand("fav",       "Your favourite stops"),
+        BotCommand("help",      "Show this message"),
     ])
 
 
@@ -799,6 +856,7 @@ def main() -> None:
     app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals",   arrivals_command))
     app.add_handler(CommandHandler("direction",  direction_command))
+    app.add_handler(CommandHandler("bus",        bus_command))
     app.add_handler(CommandHandler("debugplan",  debugplan_command))
     app.add_handler(nearby_handler)
     app.add_handler(plan_handler)
