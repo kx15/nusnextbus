@@ -287,19 +287,16 @@ async def geocode_with_candidates(
     nus    = await _geocode_query(f"{query} NUS, Singapore",  _NUS_BOUNDS, api_key)
     places = await _places_search(f"{query} NUS Singapore", api_key)
 
-    # Try building-code expansions via geocoding API (works even when Places is blocked).
-    # Run these BEFORE accepting the generic NUS result — the expanded query is more
-    # specific and may correct cases like "auditorium 3 NUS" → UHALL (wrong).
-    expansion_result: Optional[tuple[float, float]] = None
+    import re as _re
+
+    # Try building-code / keyword expansions first — they are MORE specific than the
+    # generic "X NUS" query and may correct wrong hits (e.g. "auditorium 3 NUS" → UHALL).
+    # If an expansion finds an on-campus location, return it immediately (no ambiguity).
     for alt in _building_code_expansions(query):
         r = await _geocode_query(alt, _NUS_BOUNDS, api_key)
         if r and _on_campus(*r):
-            expansion_result = r
-            break
-    if expansion_result:
-        places = expansion_result  # prefer specific expansion over generic nus result
+            return r, []  # specific expansion → trusted, skip disambiguation
 
-    import re as _re
     on_campus  = next((r for r in [sg, nus, places] if r and _on_campus(*r)), None)
     off_campus = sg if sg and not _on_campus(*sg) else None
 
