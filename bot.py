@@ -584,8 +584,8 @@ _NUS_ROUTES: dict[str, list[str]] = {
     # D2 confirmed route (user-verified):
     "D2": [
         "COM3", "TCOMS-OPP", "PGP", "KR-MRT",
-        "LT27", "UHALL", "UHC-OPP", "UHALL-OPP",
-        "S17", "KR-MRT-OPP", "PGP", "TCOMS", "COM3",
+        "LT27", "UHALL", "UHC-OPP", "MUSEUM", "UTOWN", "UHC",
+        "UHALL-OPP", "S17", "KR-MRT-OPP", "PGP", "TCOMS", "COM3",
     ],
 
     # K confirmed route (user-verified):
