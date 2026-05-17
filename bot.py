@@ -4,17 +4,26 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
+    MessageHandler,
+    filters,
     ContextTypes,
 )
 
 from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
-from stops import STOPS, find_stop
+from stops import STOPS, find_stop, nearby_stops
 
 load_dotenv()
 
@@ -114,6 +123,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "no more standing at the stop praying fr\n\n"
         "• /all — every bus on campus rn\n"
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
+        "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
         "• /help — what is this app",
         parse_mode="Markdown",
@@ -122,6 +132,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await start(update, context)
+
+
+def _location_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("📍 share my location", request_location=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+async def nearby_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "where are you? 📍",
+        reply_markup=_location_keyboard(),
+    )
+
+
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    loc = update.message.location
+    stops = nearby_stops(loc.latitude, loc.longitude, radius_m=500)
+    if not stops:
+        await update.message.reply_text("no stops nearby... you might be off campus 💀")
+        return
+    buttons = [
+        [InlineKeyboardButton(
+            f"🚏 {s['name']} — {s['caption']} ({s['dist']} m)",
+            callback_data=f"stop:{s['name']}",
+        )]
+        for s in stops[:5]
+    ]
+    await update.message.reply_text(
+        f"found {len(stops)} stop(s) nearby 👇",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
 async def stops_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -276,6 +320,7 @@ async def post_init(app: Application) -> None:
         BotCommand("start",    "What is this app"),
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
+        BotCommand("nearby",   "Find stops near you 📍"),
         BotCommand("fav",      "Your favourite stops"),
         BotCommand("help",     "Show this message"),
     ])
@@ -287,12 +332,14 @@ def main() -> None:
 
     app = Application.builder().token(token).post_init(post_init).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("all", all_command))
-    app.add_handler(CommandHandler("stops", stops_command))
+    app.add_handler(CommandHandler("start",    start))
+    app.add_handler(CommandHandler("help",     help_command))
+    app.add_handler(CommandHandler("all",      all_command))
+    app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals", arrivals_command))
-    app.add_handler(CommandHandler("fav", fav_command))
+    app.add_handler(CommandHandler("nearby",   nearby_command))
+    app.add_handler(CommandHandler("fav",      fav_command))
+    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     logger.info("Starting bot (polling)...")
