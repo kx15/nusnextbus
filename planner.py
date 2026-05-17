@@ -211,24 +211,43 @@ async def _places_search(query: str, api_key: str) -> Optional[tuple[float, floa
         return None
 
 
+# NUS campus bounding box — results inside this are preferred over off-campus matches
+_NUS_LAT = (1.285, 1.310)
+_NUS_LNG = (103.765, 103.800)
+
+
+def _on_campus(lat: float, lng: float) -> bool:
+    return _NUS_LAT[0] <= lat <= _NUS_LAT[1] and _NUS_LNG[0] <= lng <= _NUS_LNG[1]
+
+
 async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     """
     Resolve a free-text location to (lat, lng).
-    1. Geocoding API — Singapore-wide (works for addresses, MRT stations, etc.)
-    2. Geocoding API — with 'NUS' appended + campus bounds bias
-    3. Places Text Search — best for named campus POIs like LT28, COM1, E1A
+
+    Strategy:
+    1. Singapore-wide geocoding — if the result is ON campus, accept immediately.
+    2. NUS-biased geocoding — if stage 1 returned nothing or an off-campus result,
+       try again with 'NUS' appended and campus bounds. Accept if on campus.
+    3. Places Text Search — for abbreviations / POI codes (LT28, COM1, Saga College).
+    4. Fall back to the off-campus stage-1 result if nothing better was found
+       (so off-campus destinations like Orchard MRT still work).
     """
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
         return None
 
-    result = await _geocode_query(f"{query}, Singapore", _SG_BOUNDS, api_key)
-    if result:
-        return result
+    sg_result = await _geocode_query(f"{query}, Singapore", _SG_BOUNDS, api_key)
+    if sg_result and _on_campus(*sg_result):
+        return sg_result  # On-campus hit — done
 
-    result = await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
-    if result:
-        return result
+    # Stage-1 returned off-campus (or nothing). Try NUS-specific searches first.
+    nus_result = await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
+    if nus_result and _on_campus(*nus_result):
+        return nus_result
 
-    # Last resort: Places Text Search handles abbreviations and POI names
-    return await _places_search(f"{query} NUS Singapore", api_key)
+    places_result = await _places_search(f"{query} NUS Singapore", api_key)
+    if places_result and _on_campus(*places_result):
+        return places_result
+
+    # Nothing on campus found — accept off-campus stage-1 result if it exists
+    return sg_result or nus_result or places_result
