@@ -255,6 +255,13 @@ def _building_code_expansions(query: str) -> list[str]:
                  f"S {m.group(1)} NUS Singapore"]
         return exps
 
+    # Auditorium N → UTown (numbered NUS auditoriums are in UTown)
+    m = _re.match(r'^AUDITORIUM\s*(\d+[A-Z]?)$', q)
+    if m:
+        exps += [f"UTown Auditorium {m.group(1)} NUS Singapore",
+                 f"Auditorium {m.group(1)} University Town NUS Singapore"]
+        return exps
+
     # Generic: letters + digits (e.g. AS6, COM1)
     m = _re.match(r'^([A-Z]+)(\d+[A-Z]?)$', q)
     if m:
@@ -280,13 +287,17 @@ async def geocode_with_candidates(
     nus    = await _geocode_query(f"{query} NUS, Singapore",  _NUS_BOUNDS, api_key)
     places = await _places_search(f"{query} NUS Singapore", api_key)
 
-    # If still no on-campus hit, try expanded building-code queries (LT24, AS6, E3A…)
-    if not any(_on_campus(*r) for r in [sg, nus, places] if r):
-        for alt in _building_code_expansions(query):
-            result = await _places_search(alt, api_key)
-            if result and _on_campus(*result):
-                places = result
-                break
+    # Try building-code expansions via geocoding API (works even when Places is blocked).
+    # Run these BEFORE accepting the generic NUS result — the expanded query is more
+    # specific and may correct cases like "auditorium 3 NUS" → UHALL (wrong).
+    expansion_result: Optional[tuple[float, float]] = None
+    for alt in _building_code_expansions(query):
+        r = await _geocode_query(alt, _NUS_BOUNDS, api_key)
+        if r and _on_campus(*r):
+            expansion_result = r
+            break
+    if expansion_result:
+        places = expansion_result  # prefer specific expansion over generic nus result
 
     import re as _re
     on_campus  = next((r for r in [sg, nus, places] if r and _on_campus(*r)), None)
@@ -327,7 +338,15 @@ async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     if sg_result and _on_campus(*sg_result):
         return sg_result  # On-campus hit — done
 
-    # Stage-1 returned off-campus (or nothing). Try NUS-specific searches first.
+    # Try building-code / keyword expansions FIRST — they're more specific than
+    # the generic "X NUS, Singapore" query (which can return wrong campus buildings).
+    # e.g. "Auditorium 3 NUS" → UHALL (wrong); "UTown Auditorium 3 NUS" → correct.
+    for alt in _building_code_expansions(query):
+        r = await _geocode_query(alt, _NUS_BOUNDS, api_key)
+        if r and _on_campus(*r):
+            return r
+
+    # Stage-1 returned off-campus (or nothing). Try generic NUS search.
     nus_result = await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
     if nus_result and _on_campus(*nus_result):
         return nus_result
@@ -335,12 +354,6 @@ async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
     places_result = await _places_search(f"{query} NUS Singapore", api_key)
     if places_result and _on_campus(*places_result):
         return places_result
-
-    # Try expanded building-code queries (LT24, E3A, AS6 …)
-    for alt in _building_code_expansions(query):
-        r = await _places_search(alt, api_key)
-        if r and _on_campus(*r):
-            return r
 
     # Nothing on campus found — accept off-campus stage-1 result if it exists
     return sg_result or nus_result or places_result
