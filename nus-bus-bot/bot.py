@@ -628,43 +628,45 @@ async def _route_on_campus(
     dest_lng: float,
     dest_is_exact_stop: bool,
 ) -> None:
-    """On-campus → on-campus: NUS shuttle + last-mile walk."""
-    tasks: list = [
+    """On-campus → on-campus: NUS shuttle + walk."""
+    origin_arrivals, dest_arrivals = await asyncio.gather(
         get_arrivals_async(origin["name"]),
         get_arrivals_async(dest_stop["name"]),
-    ]
-    if not dest_is_exact_stop:
-        tasks.append(get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng))
+        return_exceptions=True,
+    )
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    origin_arrivals, dest_arrivals = results[0], results[1]
-    walk = results[2] if not dest_is_exact_stop else None
-
+    common: set = set()
     if not isinstance(origin_arrivals, Exception) and not isinstance(dest_arrivals, Exception):
         origin_names = {t.name for t in origin_arrivals.timings if not t.name.strip().isdigit()}
         dest_names   = {t.name for t in dest_arrivals.timings   if not t.name.strip().isdigit()}
         common = origin_names & dest_names
-        if common:
-            lines.append(
-                f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*"
-            )
-            for t in origin_arrivals.timings:
-                if t.name in common:
-                    lines.append(
-                        "  " + _fmt_nus_shuttle(t.name, origin, dest_stop,
-                                                t.arrival_time, t.next_arrival_time)
-                    )
-            lines.append("")
-        else:
-            lines.append("no direct NUS bus — might need a transfer or just walk 🚶\n")
 
-    if walk and not isinstance(walk, Exception) and walk.get("duration"):
-        lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
-        _fmt_steps(lines, walk.get("steps", []))
+    if common:
+        lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*")
+        for t in origin_arrivals.timings:
+            if t.name in common:
+                lines.append(
+                    "  " + _fmt_nus_shuttle(t.name, origin, dest_stop,
+                                            t.arrival_time, t.next_arrival_time)
+                )
         lines.append("")
+        # Last-mile walk from the bus stop to the final building
+        if not dest_is_exact_stop:
+            walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+            if not isinstance(walk, Exception) and walk.get("duration"):
+                lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                _fmt_steps(lines, walk.get("steps", []))
+                lines.append("")
+    else:
+        lines.append("no direct NUS bus — walking instead 🚶\n")
+        # No shuttle: walk directly from the user's origin to the destination
+        walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
+        if not isinstance(walk, Exception) and walk.get("duration"):
+            lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
+            _fmt_steps(lines, walk.get("steps", []))
+            lines.append("")
 
     from urllib.parse import quote as _quote
-    # Use stop/place names so Google Maps shows meaningful labels, not raw addresses
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
     maps_url = (
         f"https://www.google.com/maps/dir/?api=1"
