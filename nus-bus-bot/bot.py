@@ -458,6 +458,51 @@ _GATEWAYS = [
     ("BG-MRT", "Botanic Gardens MRT Station, Singapore"),
 ]
 
+# Ordered stop sequences for each NUS ISB route (both directions where applicable)
+_NUS_ROUTES: dict[str, list[str]] = {
+    "A1":  ["KR-MRT", "LT13", "AS5", "BIZ2", "CLB", "LT13-OPP", "IT", "COM3", "BIZ2",
+            "PGP", "PGPR", "KRB", "LT27", "S17", "YIH", "CLB", "LT13", "AS5",
+            "MUSEUM", "UTOWN", "RAFFLES", "CG", "MUSEUM", "KV", "BG-MRT"],
+    "A2":  ["BG-MRT", "KV", "MUSEUM", "CG", "RAFFLES", "UTOWN", "MUSEUM",
+            "YIH", "S17", "LT27", "KRB", "PGPR", "PGP", "COM3", "IT",
+            "LT13-OPP", "CLB", "BIZ2", "AS5", "LT13", "KR-MRT"],
+    "D1":  ["COM3", "BIZ2", "CLB", "LT13-OPP", "AS5", "YIH", "MUSEUM",
+            "UTOWN", "MUSEUM", "YIH", "AS5", "LT13-OPP", "CLB", "BIZ2", "COM3"],
+    "D2":  ["COM3", "IT", "S17", "LT27", "KRB", "PGPR", "PGP",
+            "MUSEUM", "UTOWN", "KR-MRT", "UTOWN", "MUSEUM",
+            "PGP", "PGPR", "KRB", "LT27", "S17", "IT", "COM3"],
+    "K":   ["KR-MRT", "LT13", "AS5", "YIH", "CLB", "LT13-OPP",
+            "PGP", "PGPR", "KRB", "LT27", "S17", "MUSEUM",
+            "UTOWN", "MUSEUM", "KV", "BG-MRT"],
+    "P":   ["KR-MRT", "UTOWN", "CG", "UTOWN", "BG-MRT", "KV",
+            "MUSEUM", "UTOWN", "KR-MRT"],
+    "R1":  ["CLB", "LT13-OPP", "BIZ2", "AS5", "YIH", "MUSEUM",
+            "UTOWN", "MUSEUM", "YIH", "AS5", "BIZ2", "LT13-OPP", "CLB"],
+    "R2":  ["PGP", "PGPR", "IT", "UTOWN", "RAFFLES", "UTOWN",
+            "IT", "PGPR", "PGP"],
+}
+
+
+def _nus_stops_between(bus: str, board: str, alight: str) -> Optional[int]:
+    """Return number of stops between board and alight for a given NUS bus, or None."""
+    route = _NUS_ROUTES.get(bus, [])
+    try:
+        i = route.index(board)
+        j = route.index(alight, i + 1)
+        return j - i
+    except ValueError:
+        return None
+
+
+def _fmt_nus_shuttle(bus_name: str, board_stop: dict, alight_stop: dict,
+                     arrival: str, next_arrival: str) -> str:
+    stops = _nus_stops_between(bus_name, board_stop["name"], alight_stop["name"])
+    stops_txt = f" · {stops} stop{'s' if stops != 1 else ''}" if stops else ""
+    return (
+        f"🚌 *{bus_name}*{stops_txt}  "
+        f"{_fmt_time(arrival)} | Next: {_fmt_time(next_arrival)}"
+    )
+
 
 def _fmt_steps(lines: list, steps: list, indent: str = "") -> None:
     for i, step in enumerate(steps, 1):
@@ -503,12 +548,14 @@ async def _route_on_campus(
         dest_names   = {t.name for t in dest_arrivals.timings   if not t.name.strip().isdigit()}
         common = origin_names & dest_names
         if common:
-            lines.append("🚌 *NUS buses:*")
+            lines.append(
+                f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*"
+            )
             for t in origin_arrivals.timings:
                 if t.name in common:
                     lines.append(
-                        f"  *{t.name}*: {_fmt_time(t.arrival_time)}"
-                        f" | Next: {_fmt_time(t.next_arrival_time)}"
+                        "  " + _fmt_nus_shuttle(t.name, origin, dest_stop,
+                                                t.arrival_time, t.next_arrival_time)
                     )
             lines.append("")
         else:
@@ -610,13 +657,14 @@ async def _route_offcampus_to_campus(
     lines.append("")
 
     # ② NUS shuttle to destination stop
-    lines.append(f"*② NUS shuttle → {dest_stop['caption']}*")
+    gw = best["gateway"]
+    lines.append(f"*② NUS shuttle: {gw['caption']} → {dest_stop['caption']}*")
     if best["common"] and not isinstance(best["arrivals"], Exception):
         for t in best["arrivals"].timings:
             if t.name in best["common"]:
                 lines.append(
-                    f"🚌 *{t.name}*: {_fmt_time(t.arrival_time)}"
-                    f" | Next: {_fmt_time(t.next_arrival_time)}"
+                    "  " + _fmt_nus_shuttle(t.name, gw, dest_stop,
+                                            t.arrival_time, t.next_arrival_time)
                 )
     else:
         lines.append("no direct NUS bus — check /arrivals for options")
