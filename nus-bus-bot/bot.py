@@ -555,40 +555,98 @@ _GATEWAYS = [
     ("BG-MRT", "Botanic Gardens MRT Station, Singapore"),
 ]
 
-# Ordered stop sequences for each NUS ISB route (both directions where applicable)
+# Ordered stop sequences for each NUS ISB route.
+# Stop membership verified against NUS NextBus API (/ShuttleService per stop).
+# Direction order is best-estimate geographic; count may be ±1 for edge cases.
 _NUS_ROUTES: dict[str, list[str]] = {
-    "A1":  ["KR-MRT", "LT13", "AS5", "BIZ2", "CLB", "LT13-OPP", "IT", "COM3", "BIZ2",
-            "PGP", "PGPR", "KRB", "LT27", "S17", "YIH", "CLB", "LT13", "AS5",
-            "MUSEUM", "UTOWN", "RAFFLES", "CG", "MUSEUM", "KV", "BG-MRT"],
-    "A2":  ["BG-MRT", "KV", "MUSEUM", "CG", "RAFFLES", "UTOWN", "MUSEUM",
-            "YIH", "S17", "LT27", "KRB", "PGPR", "PGP", "COM3", "IT",
-            "LT13-OPP", "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "AS5", "LT13", "KR-MRT"],
-    "D1":  ["COM3", "BIZ2", "HSSML-OPP", "NUSS-OPP", "CLB", "LT13-OPP", "AS5", "YIH", "MUSEUM",
-            "UTOWN", "MUSEUM", "YIH", "AS5", "LT13-OPP", "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "COM3"],
-    "D2":  ["COM3", "IT", "S17", "LT27", "KRB", "PGPR", "PGP",
-            "MUSEUM", "UTOWN", "KR-MRT", "UTOWN", "MUSEUM",
-            "PGP", "PGPR", "KRB", "LT27", "S17", "IT", "COM3"],
-    "K":   ["KR-MRT", "LT13", "AS5", "YIH", "CLB", "LT13-OPP",
-            "PGP", "PGPR", "KRB", "LT27", "S17", "MUSEUM",
-            "UTOWN", "MUSEUM", "KV", "BG-MRT"],
-    "P":   ["KR-MRT", "UTOWN", "CG", "OTH", "BG-MRT", "KV",
-            "MUSEUM", "UTOWN", "KR-MRT"],
-    "R1":  ["CLB", "LT13-OPP", "BIZ2", "AS5", "YIH", "MUSEUM",
-            "UTOWN", "MUSEUM", "YIH", "AS5", "BIZ2", "LT13-OPP", "CLB"],
-    "R2":  ["PGP", "PGPR", "IT", "UTOWN", "RAFFLES", "UTOWN",
-            "IT", "PGPR", "PGP"],
+    # A1 confirmed stops: KR-MRT, LT13, AS5, BIZ2, CLB, KRB, LT27, PGP,
+    #   TCOMS-OPP, UHALL, UHC-OPP, YIH
+    "A1": [
+        "KR-MRT", "LT13", "AS5", "BIZ2", "CLB",
+        "TCOMS-OPP", "PGP", "KRB",
+        "LT27", "UHALL", "UHC-OPP", "YIH",
+        "CLB", "BIZ2", "AS5", "LT13", "KR-MRT",
+    ],
+    # A2 confirmed stops: KR-MRT(-OPP end), LT13-OPP, HSSML-OPP, NUSS-OPP, IT,
+    #   TCOMS, S17, LT27, KRB, PGP, PGPR, UHALL-OPP, UHC, YIH-OPP, MUSEUM, UTOWN,
+    #   KV, BG-MRT
+    "A2": [
+        "BG-MRT", "KV", "MUSEUM", "UTOWN",
+        "YIH-OPP", "UHC", "UHALL-OPP", "TCOMS",
+        "S17", "LT27", "KRB", "PGP", "PGPR",
+        "IT", "LT13-OPP", "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "AS5", "LT13",
+        "KR-MRT",
+    ],
+    # D1 confirmed stops: COM3, BIZ2, HSSML-OPP, NUSS-OPP, CLB, LT13-OPP, IT,
+    #   LT13, AS5, YIH, YIH-OPP, MUSEUM, UTOWN
+    "D1": [
+        "COM3", "BIZ2", "HSSML-OPP", "NUSS-OPP", "CLB",
+        "LT13-OPP", "IT", "LT13", "AS5", "YIH", "YIH-OPP", "MUSEUM",
+        "UTOWN",
+        "MUSEUM", "YIH-OPP", "YIH", "AS5", "LT13", "IT", "LT13-OPP",
+        "CLB", "NUSS-OPP", "HSSML-OPP", "BIZ2", "COM3",
+    ],
+    # D2 confirmed stops: COM3, TCOMS, TCOMS-OPP, S17, LT27, KRB, PGPR, PGP,
+    #   UHALL-OPP, UHALL, UHC, UHC-OPP, UTOWN, KR-MRT-OPP, KR-MRT
+    "D2": [
+        "COM3", "TCOMS-OPP", "TCOMS", "S17", "LT27", "KRB", "PGPR", "PGP",
+        "UHALL-OPP", "UHALL", "UHC", "UHC-OPP",
+        "UTOWN", "KR-MRT-OPP", "KR-MRT",
+        "UTOWN", "UHC-OPP", "UHC", "UHALL", "UHALL-OPP",
+        "PGP", "PGPR", "KRB", "LT27", "S17", "TCOMS", "TCOMS-OPP", "COM3",
+    ],
+    # K confirmed stops: KR-MRT, LT13, AS5, SDE3-OPP, YIH, CLB, JP-SCH-16151,
+    #   KR-MRT-OPP, UHALL-OPP, UHALL, UHC, UHC-OPP, PGP, PGPR, KRB, LT27, S17,
+    #   MUSEUM, UTOWN, KV, BG-MRT
+    # Note: LT13-OPP is NOT K
+    "K": [
+        "KR-MRT", "LT13", "AS5", "SDE3-OPP", "YIH", "CLB",
+        "JP-SCH-16151", "KR-MRT-OPP",
+        "UHALL-OPP", "UHC", "UHALL", "UHC-OPP",
+        "PGP", "PGPR", "KRB", "LT27", "S17",
+        "MUSEUM", "UTOWN", "KV", "BG-MRT",
+    ],
+    # P confirmed stops: KR-MRT, UHC-OPP, UTOWN, CG, OTH, BG-MRT, KV, MUSEUM
+    "P": [
+        "KR-MRT", "UHC-OPP", "UTOWN", "CG", "OTH", "BG-MRT", "KV",
+        "MUSEUM", "UTOWN", "UHC-OPP", "KR-MRT",
+    ],
+    # R1 confirmed stops: CLB, LT13, BIZ2, AS5, YIH, MUSEUM, UTOWN, KV, PGP
+    # Note: LT13-OPP is NOT R1
+    "R1": [
+        "CLB", "LT13", "BIZ2", "AS5", "YIH", "MUSEUM",
+        "UTOWN", "KV", "MUSEUM", "YIH", "AS5", "BIZ2", "LT13", "CLB",
+    ],
+    # R2 confirmed stops: PGP, PGPR, IT, LT13-OPP, NUSS-OPP, HSSML-OPP,
+    #   UTOWN, RAFFLES, KV
+    "R2": [
+        "PGP", "PGPR", "IT", "LT13-OPP", "NUSS-OPP", "HSSML-OPP",
+        "UTOWN", "RAFFLES", "KV",
+        "UTOWN", "HSSML-OPP", "NUSS-OPP", "LT13-OPP", "IT", "PGPR", "PGP",
+    ],
 }
 
 
 def _nus_stops_between(bus: str, board: str, alight: str) -> Optional[int]:
     """Return number of stops between board and alight for a given NUS bus, or None."""
     route = _NUS_ROUTES.get(bus, [])
-    try:
-        i = route.index(board)
-        j = route.index(alight, i + 1)
-        return j - i
-    except ValueError:
-        return None
+    # Try every occurrence of board and return the smallest positive gap
+    best: Optional[int] = None
+    start = 0
+    while True:
+        try:
+            i = route.index(board, start)
+        except ValueError:
+            break
+        try:
+            j = route.index(alight, i + 1)
+            gap = j - i
+            if best is None or gap < best:
+                best = gap
+        except ValueError:
+            pass
+        start = i + 1
+    return best
 
 
 def _fmt_nus_shuttle(bus_name: str, board_stop: dict, alight_stop: dict,
