@@ -892,6 +892,13 @@ async def debugplan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text("\n".join(lines) or "empty result")
 
 
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cmd = update.message.text.split()[0] if update.message.text else "that"
+    await update.message.reply_text(
+        f"bro what is {cmd} 💀 that's not a thing\n\ntype /start to see what i can actually do 👇",
+    )
+
+
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
         BotCommand("start",    "What is this app"),
@@ -946,6 +953,7 @@ def main() -> None:
     app.add_handler(plan_handler)
     app.add_handler(CommandHandler("fav",      fav_command))
     app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     logger.info("Starting bot (polling)...")
     app.run_polling(drop_pending_updates=True)
