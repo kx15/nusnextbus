@@ -463,7 +463,7 @@ async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng
 
         if o_stop and d_stop:
             logger.info("routing: on-campus %s → %s", o_stop["name"], d_stop["name"])
-            await _route_on_campus(lines, o_stop, origin_loc, d_stop, d_lat, d_lng, d_is_exact)
+            await _route_on_campus(lines, o_stop, origin_loc, d_stop, d_lat, d_lng, d_is_exact, d_label)
         elif d_stop:
             logger.info("routing: off-campus → %s", d_stop["name"])
             await _route_offcampus_to_campus(lines, origin_loc, d_stop, d_lat, d_lng, d_is_exact)
@@ -677,6 +677,7 @@ async def _route_on_campus(
     dest_lat: float,
     dest_lng: float,
     dest_is_exact_stop: bool,
+    dest_label: str = "",
 ) -> None:
     """On-campus → on-campus: NUS shuttle + walk."""
     is_bt_dest   = dest_stop["name"] in _BUKIT_TIMAH_STOPS
@@ -707,14 +708,17 @@ async def _route_on_campus(
 
     from urllib.parse import quote as _quote
     origin_addr = _quote(f"{origin['caption']} NUS Singapore")
-    # Use the stop caption as destination text when it's a named stop — GPS coords
-    # reverse-geocode to street addresses (e.g. "38 Dover Rd") instead of stop names
-    # Always use coordinates for destination — NUS stop names like "College Green"
-    # resolve to wrong locations when passed as text to Google Maps
+    # For named buildings (not exact bus stops), use the label as destination text —
+    # raw coordinates reverse-geocode to unhelpful road names like "Opp NUSS".
+    # For exact bus stops, coordinates are more reliable than the stop caption.
+    if not dest_is_exact_stop and dest_label:
+        dest_for_maps = _quote(f"{dest_label} NUS Singapore")
+    else:
+        dest_for_maps = f"{dest_lat},{dest_lng}"
     maps_url = (
         f"https://www.google.com/maps/dir/?api=1"
         f"&origin={origin_addr}"
-        f"&destination={dest_lat},{dest_lng}"
+        f"&destination={dest_for_maps}"
         f"&travelmode={'transit' if is_bt else 'walking'}"
     )
 
