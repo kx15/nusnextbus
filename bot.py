@@ -125,7 +125,7 @@ def stops_keyboard(page: int) -> InlineKeyboardMarkup:
 
 def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
     timestamp = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M")
-    header = f"🚌 *all NUS stops* ⏱ {timestamp}\n\n"
+    header = f"🚌 *all buses rn* ⏱ {timestamp}\n\n"
     lines = []
     for arrivals in results:
         if arrivals is None:
