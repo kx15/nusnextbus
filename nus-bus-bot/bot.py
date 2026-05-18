@@ -843,8 +843,12 @@ def _best_dest_stop(o_stop_name: str, candidates: list) -> Optional[dict]:
     return best_stop
 
 
+_MAIN_SERVICES = frozenset({"A1", "A2", "D1", "D2"})
+
+
 def _find_transfers(origin_name: str, dest_name: str) -> list[tuple[str, str, str, int]]:
-    """Find 1-transfer journeys (bus1, transfer_stop, bus2, total_stops), fewest stops first."""
+    """Find 1-transfer journeys (bus1, transfer_stop, bus2, total_stops).
+    Sorted by total stops, then by preference for main services (A1/A2/D1/D2)."""
     seen: dict[tuple[str, str, str], int] = {}
     for stop in STOPS:
         mid = stop["name"]
@@ -862,9 +866,15 @@ def _find_transfers(origin_name: str, dest_name: str) -> list[tuple[str, str, st
                 total = n1 + n2
                 if key not in seen or total < seen[key]:
                     seen[key] = total
+
+    def _score(item: tuple) -> tuple:
+        b1, _, b2, stops = item
+        non_main = (0 if b1 in _MAIN_SERVICES else 1) + (0 if b2 in _MAIN_SERVICES else 1)
+        return (stops, non_main)
+
     return sorted(
         [(b1, mid, b2, sc) for (b1, mid, b2), sc in seen.items()],
-        key=lambda x: x[3],
+        key=_score,
     )
 
 
