@@ -125,17 +125,18 @@ def stops_keyboard(page: int) -> InlineKeyboardMarkup:
 
 def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
     timestamp = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M")
-    header = f"🚌 *all buses rn* ⏱ {timestamp}\n\n"
+    header = f"🚌 *all NUS stops* ⏱ {timestamp}\n\n"
     lines = []
     for arrivals in results:
         if arrivals is None:
             continue
-        active = [t for t in arrivals.timings if not t.name.strip().isdigit() and t.arrival_time not in ("-", "")]
-        if not active:
-            continue
-        buses = "  ".join(
-            f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in active
-        )
+        shuttles = [t for t in arrivals.timings if not t.name.strip().isdigit()]
+        if not shuttles:
+            buses = "no service"
+        else:
+            buses = "  ".join(
+                f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in shuttles
+            )
         lines.append(f"`{arrivals.stop_name}` — {arrivals.stop_caption}\n{buses}")
     pages: list[str] = []
     current = header
@@ -148,7 +149,7 @@ def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
             current += block
     if current.strip():
         pages.append(current.rstrip())
-    return pages or ["literally no buses anywhere rn 💀 skill issue"]
+    return pages or ["no stops data available"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
