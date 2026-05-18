@@ -47,8 +47,8 @@ _DIRECTION_STOPS = [
     ("MUSEUM", "Museum"),
     ("LT27",   "LT 27"),
     ("KRB",    "KR Bus Terminal"),
-    ("OTH",    "Oei Tiong Ham (BTC)"),
-    ("CG",     "College Green (BTC)"),
+    ("OTH",      "Oei Tiong Ham (BTC)"),
+    ("NUSS-OPP", "Opp NUSS"),
 ]
 
 
