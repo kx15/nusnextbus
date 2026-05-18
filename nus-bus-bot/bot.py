@@ -891,15 +891,22 @@ async def _route_on_campus(
                 lines.append(f"  _cross the road to {step2_stop['caption']}_")
             lines.append("")
 
-            # Step 2: Connecting shuttle (from hub or companion)
-            step2 = min(to_dest,
-                        key=lambda b: _nus_stops_between(b, step2_name, dest_stop["name"]) or 999)
-            for t in (step2_arr.timings if step2_arr and not isinstance(step2_arr, Exception) else []):
-                if t.name == step2:
-                    lines.append(f"*② {step2_stop['caption']} → {dest_stop['caption']}*")
-                    lines.append("  " + _fmt_nus_shuttle(step2, step2_stop, dest_stop,
-                                                          t.arrival_time, t.next_arrival_time))
-                    break
+            # Step 2: All valid connecting buses (sorted by fewest stops)
+            live_step2: dict = {}
+            if step2_arr and not isinstance(step2_arr, Exception):
+                for t in step2_arr.timings:
+                    if not t.name.strip().isdigit():
+                        live_step2[t.name] = t
+            conn_buses = sorted(
+                to_dest,
+                key=lambda b: _nus_stops_between(b, step2_name, dest_stop["name"]) or 999,
+            )
+            lines.append(f"*② {step2_stop['caption']} → {dest_stop['caption']}*")
+            for bus_name in conn_buses:
+                td  = live_step2.get(bus_name)
+                arr = td.arrival_time      if td else "-"
+                nxt = td.next_arrival_time if td else "-"
+                lines.append("  " + _fmt_nus_shuttle(bus_name, step2_stop, dest_stop, arr, nxt))
             lines.append("")
             lines.append(f"[open in Google Maps]({maps_url})")
 
