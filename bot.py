@@ -149,7 +149,7 @@ def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
             current += block
     if current.strip():
         pages.append(current.rstrip())
-    return pages or ["no stops data available"]
+    return pages or ["literally no buses anywhere rn 💀 skill issue"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
