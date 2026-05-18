@@ -159,7 +159,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
         "• /plan — route planner (share location → type destination)\n"
         "• /direction — route planner with stop picker\n"
-        "• /direction `<from> to <dest>` — quick e.g. `/direction CLB to UTOWN`\n"
+        "• /direction `<from> to <dest>` — quick plan e.g. `/direction CLB to UTOWN`\n"
         "• /bus `<service>` — NUS bus route e.g. `/bus A1`\n"
         "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
