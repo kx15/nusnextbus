@@ -35,7 +35,7 @@ PLAN_ORIGIN, PLAN_DEST = range(2)
 NEARBY_LOCATION = 2
 DIRECTION_FROM, DIRECTION_TO = 3, 4
 
-# Common NUS stops shown as quick-pick buttons in /direction
+# Page 0 quick-pick stops (shown first, same set)
 _DIRECTION_STOPS = [
     ("CLB",    "Central Library"),
     ("KR-MRT", "Kent Ridge MRT"),
@@ -50,17 +50,53 @@ _DIRECTION_STOPS = [
     ("OTH",      "Oei Tiong Ham (BTC)"),
     ("NUSS-OPP", "Opp NUSS"),
 ]
+_DIRECTION_STOPS_PER_PAGE = 12
+# Quick-pick names for deduplication
+_DIRECTION_STOP_NAMES = {name for name, _ in _DIRECTION_STOPS}
 
 
-def _direction_keyboard(prefix: str) -> InlineKeyboardMarkup:
+def _direction_extra_stops() -> list[tuple[str, str]]:
+    """All STOPS not in the quick-pick list, sorted A–Z by caption."""
+    return sorted(
+        [(s["name"], s["caption"]) for s in STOPS if s["name"] not in _DIRECTION_STOP_NAMES],
+        key=lambda x: x[1],
+    )
+
+
+def _direction_keyboard(prefix: str, page: int = 0) -> InlineKeyboardMarkup:
+    """
+    Page 0 : quick-pick stops sorted A–Z.
+    Page 1+: remaining stops sorted A–Z, _DIRECTION_STOPS_PER_PAGE at a time.
+    """
+    if page == 0:
+        page_items = sorted(_DIRECTION_STOPS, key=lambda x: x[1])
+        extra = _direction_extra_stops()
+        has_next = len(extra) > 0
+        has_prev = False
+    else:
+        extra = _direction_extra_stops()
+        start   = (page - 1) * _DIRECTION_STOPS_PER_PAGE
+        page_items = extra[start : start + _DIRECTION_STOPS_PER_PAGE]
+        has_prev = True
+        has_next = start + _DIRECTION_STOPS_PER_PAGE < len(extra)
+
     rows, pair = [], []
-    for stop_name, label in _DIRECTION_STOPS:
+    for stop_name, label in page_items:
         pair.append(InlineKeyboardButton(label, callback_data=f"{prefix}:{stop_name}"))
         if len(pair) == 2:
             rows.append(pair)
             pair = []
     if pair:
         rows.append(pair)
+
+    nav = []
+    if has_prev:
+        nav.append(InlineKeyboardButton("← Back", callback_data=f"{prefix}_page:{page - 1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton("More stops →", callback_data=f"{prefix}_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
     return InlineKeyboardMarkup(rows)
 
 logging.basicConfig(
@@ -577,7 +613,14 @@ async def _direction_resolve(query_or_stop: str, is_stop_name: bool) -> tuple:
 async def direction_got_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.callback_query:
         await update.callback_query.answer()
-        stop_name = update.callback_query.data.split(":", 1)[1]
+        data = update.callback_query.data
+        if "_page:" in data:
+            page = int(data.split("_page:")[1])
+            await update.callback_query.edit_message_reply_markup(
+                reply_markup=_direction_keyboard("dir_from", page)
+            )
+            return DIRECTION_FROM
+        stop_name = data.split(":", 1)[1]
         stop = find_stop(stop_name)
         label = stop["caption"] if stop else stop_name
         context.user_data.update({"dir_o_stop": stop, "dir_o_lat": stop["lat"] if stop else None,
@@ -615,7 +658,17 @@ async def direction_got_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if update.callback_query:
         await update.callback_query.answer()
-        stop_name  = update.callback_query.data.split(":", 1)[1]
+        data = update.callback_query.data
+        if "_page:" in data:
+            page = int(data.split("_page:")[1])
+            # Put origin back so it's available when user picks destination
+            context.user_data.update({"dir_o_stop": o_stop, "dir_o_lat": o_lat,
+                                       "dir_o_lng": o_lng, "dir_o_label": o_label})
+            await update.callback_query.edit_message_reply_markup(
+                reply_markup=_direction_keyboard("dir_to", page)
+            )
+            return DIRECTION_TO
+        stop_name  = data.split(":", 1)[1]
         d_stop     = find_stop(stop_name)
         d_lat      = d_stop["lat"]     if d_stop else None
         d_lng      = d_stop["lng"]     if d_stop else None
@@ -1258,9 +1311,16 @@ async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def plan_got_dest_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle stop-picker button tap in the /plan destination step."""
+    """Handle stop-picker button tap (or page navigation) in the /plan destination step."""
     query = update.callback_query
     await query.answer()
+
+    if "_page:" in query.data:
+        page = int(query.data.split("_page:")[1])
+        await query.edit_message_reply_markup(
+            reply_markup=_direction_keyboard("plan_to", page)
+        )
+        return PLAN_DEST
 
     origin     = context.user_data.pop("plan_origin", None)
     origin_loc = context.user_data.pop("plan_origin_loc", None)
@@ -1412,7 +1472,7 @@ def main() -> None:
         states={
             PLAN_ORIGIN: [MessageHandler(filters.LOCATION, plan_got_origin)],
             PLAN_DEST: [
-                CallbackQueryHandler(plan_got_dest_stop, pattern=r"^plan_to:"),
+                CallbackQueryHandler(plan_got_dest_stop, pattern=r"^plan_to"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, plan_got_dest),
                 MessageHandler(filters.LOCATION, plan_got_dest),
             ],
@@ -1430,11 +1490,11 @@ def main() -> None:
         entry_points=[CommandHandler(["direction", "destination"], direction_start)],
         states={
             DIRECTION_FROM: [
-                CallbackQueryHandler(direction_got_from, pattern=r"^dir_from:"),
+                CallbackQueryHandler(direction_got_from, pattern=r"^dir_from"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, direction_got_from),
             ],
             DIRECTION_TO: [
-                CallbackQueryHandler(direction_got_to, pattern=r"^dir_to:"),
+                CallbackQueryHandler(direction_got_to, pattern=r"^dir_to"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, direction_got_to),
             ],
         },
