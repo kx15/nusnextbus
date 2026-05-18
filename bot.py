@@ -807,10 +807,16 @@ _BUS_P_HUBS_DEPARTURE = ["KR-MRT", "UTOWN", "MUSEUM"]
 # Used to find shorter connecting routes (e.g. D2 from KR-MRT-OPP is 3 stops to COM3
 # vs 12 stops from KR-MRT itself).
 _COMPANION_STOPS: dict[str, str] = {
-    "KR-MRT":     "KR-MRT-OPP",
-    "KR-MRT-OPP": "KR-MRT",
-    "LT27":       "S17",
-    "S17":        "LT27",
+    # Verified companion pairs (opposite sides of road, complementary bus sets)
+    "KR-MRT":    "KR-MRT-OPP",  "KR-MRT-OPP": "KR-MRT",   # 22m
+    "LT27":      "S17",          "S17":         "LT27",       # 27m
+    "TCOMS":     "TCOMS-OPP",   "TCOMS-OPP":  "TCOMS",      # 25m
+    "UHALL":     "UHALL-OPP",   "UHALL-OPP":  "UHALL",      # 22m
+    "UHC":       "UHC-OPP",     "UHC-OPP":    "UHC",        # 56m
+    "YIH":       "YIH-OPP",     "YIH-OPP":    "YIH",        # 29m
+    "LT13":      "LT13-OPP",    "LT13-OPP":   "LT13",       # 87m
+    "BIZ2":      "HSSML-OPP",   "HSSML-OPP":  "BIZ2",       # 48m
+    "CLB":       "IT",           "IT":          "CLB",        # 74m
 }
 
 
