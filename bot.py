@@ -1212,29 +1212,41 @@ async def _route_on_campus(
                 except ValueError:
                     return float("inf")
 
-            bus1, mid_name, bus2, _ = min(tied, key=_earliest_bus1)
-            mid_stop = find_stop(mid_name)
-            try:
-                mid_arrivals = await get_arrivals_async(mid_name)
-            except Exception:
-                mid_arrivals = None
-            live_mid: dict = {}
-            if mid_arrivals and not isinstance(mid_arrivals, Exception):
-                for t in mid_arrivals.timings:
-                    if not t.name.strip().isdigit():
-                        live_mid[t.name] = t
-            t1 = live_timing.get(bus1)
-            t2 = live_mid.get(bus2)
-            lines.append(f"*① {origin['caption']} → {mid_stop['caption']}*")
-            lines.append("  " + _fmt_nus_shuttle(bus1, origin, mid_stop,
-                                                  t1.arrival_time if t1 else "-",
-                                                  t1.next_arrival_time if t1 else "-"))
-            lines.append("")
-            lines.append(f"*② {mid_stop['caption']} → {dest_stop['caption']}*")
-            lines.append("  " + _fmt_nus_shuttle(bus2, mid_stop, dest_stop,
-                                                  t2.arrival_time if t2 else "-",
-                                                  t2.next_arrival_time if t2 else "-"))
-            lines.append("")
+            options = sorted(tied, key=_earliest_bus1)[:2]
+
+            # Fetch all unique transfer stops in parallel
+            unique_mids = list({mid for _, mid, _, _ in options})
+            mid_results = await asyncio.gather(
+                *[get_arrivals_async(m) for m in unique_mids],
+                return_exceptions=True,
+            )
+            live_mid_map: dict[str, dict] = {}
+            for mid_name, result in zip(unique_mids, mid_results):
+                timing_map: dict = {}
+                if not isinstance(result, Exception):
+                    for t in result.timings:
+                        if not t.name.strip().isdigit():
+                            timing_map[t.name] = t
+                live_mid_map[mid_name] = timing_map
+
+            labels = ["*Option A*", "*Option B*"] if len(options) > 1 else [""]
+            for label, (bus1, mid_name, bus2, _) in zip(labels, options):
+                mid_stop = find_stop(mid_name)
+                live_mid = live_mid_map.get(mid_name, {})
+                t1 = live_timing.get(bus1)
+                t2 = live_mid.get(bus2)
+                if label:
+                    lines.append(label)
+                lines.append(f"① {origin['caption']} → {mid_stop['caption']}")
+                lines.append("  " + _fmt_nus_shuttle(bus1, origin, mid_stop,
+                                                      t1.arrival_time if t1 else "-",
+                                                      t1.next_arrival_time if t1 else "-"))
+                lines.append(f"② {mid_stop['caption']} → {dest_stop['caption']}")
+                lines.append("  " + _fmt_nus_shuttle(bus2, mid_stop, dest_stop,
+                                                      t2.arrival_time if t2 else "-",
+                                                      t2.next_arrival_time if t2 else "-"))
+                lines.append("")
+
             if not dest_is_exact_stop:
                 walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
                 if not isinstance(walk, Exception) and walk.get("duration"):
