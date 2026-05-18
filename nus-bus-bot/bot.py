@@ -714,7 +714,7 @@ _NUS_ROUTES: dict[str, list[str]] = {
 
     # P confirmed route (user-verified):
     "P": [
-        "KV", "CG", "OTH", "BG-MRT", "KR-MRT", "UHC-OPP", "UTOWN", "KV",
+        "KV", "CG", "OTH", "BG-MRT", "KR-MRT", "UHC-OPP", "UTOWN",
     ],
 
     # R1 confirmed route (user-verified):
@@ -733,7 +733,6 @@ _NUS_ROUTES: dict[str, list[str]] = {
 def _nus_stops_between(bus: str, board: str, alight: str) -> Optional[int]:
     """Return number of stops between board and alight for a given NUS bus, or None."""
     route = _NUS_ROUTES.get(bus, [])
-    # Try every occurrence of board and return the smallest positive gap
     best: Optional[int] = None
     start = 0
     while True:
@@ -799,8 +798,9 @@ def _append_directions_block(lines: list, directions) -> None:
 
 # Stops at Bukit Timah campus — only reachable via Bus P
 _BUKIT_TIMAH_STOPS = {"CG", "BG-MRT", "OTH"}
-# Transfer hubs for arriving at BT campus (UTOWN first — closer in P route direction)
-_BUS_P_HUBS_ARRIVAL   = ["UTOWN", "KR-MRT", "MUSEUM"]
+# Transfer hubs for arriving at BT campus
+# KV is the natural P boarding point for OTH/CG (KV→CG→OTH on Bus P)
+_BUS_P_HUBS_ARRIVAL   = ["UTOWN", "KR-MRT", "KV", "MUSEUM"]
 # Transfer hubs for departing BT campus (KR-MRT first — only 2 stops from OTH on P)
 _BUS_P_HUBS_DEPARTURE = ["KR-MRT", "UTOWN", "MUSEUM"]
 # Companion stops — same physical location, opposite side of road.
@@ -1025,39 +1025,59 @@ async def _route_on_campus(
             lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
 
     elif is_bt_dest:
-        # Arriving at Bukit Timah campus — try Bus P transfer via a hub stop
+        # Arriving at Bukit Timah campus
         transfer_shown = False
-        for hub_name in all_hubs:
-            hub_stop = find_stop(hub_name)
-            hub_arr  = hub_arrivals.get(hub_name)
-            if not hub_stop or isinstance(hub_arr, Exception):
-                continue
-            hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
-            to_hub    = origin_names & hub_names
-            if not to_hub or "P" not in hub_names:
-                continue
 
-            lines.append(f"🚌 *Bus P to Bukit Timah campus*\n")
+        # Direct Bus P from origin — no hub transfer needed
+        if "P" in origin_names and "P" in dest_names:
+            p_timings = [t for t in origin_arrivals.timings if t.name == "P"]
+            if p_timings:
+                t1  = p_timings[0]
+                arr = t1.arrival_time
+                nxt = (t1.next_arrival_time
+                       if t1.next_arrival_time and t1.next_arrival_time != "-"
+                       else (p_timings[1].arrival_time if len(p_timings) > 1 else "-"))
+                lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']} (Bus P)*")
+                lines.append("  " + _fmt_nus_shuttle("P", origin, dest_stop, arr, nxt))
+                lines.append("")
+                lines.append(f"[open in Google Maps]({maps_url})")
+                transfer_shown = True
 
-            step1 = sorted(to_hub)[0]
-            for t in origin_arrivals.timings:
-                if t.name == step1:
-                    lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")
-                    lines.append("  " + _fmt_nus_shuttle(step1, origin, hub_stop,
-                                                          t.arrival_time, t.next_arrival_time))
-                    break
-            lines.append("")
+        # No direct P — try via a hub stop (skip if origin == hub)
+        if not transfer_shown:
+            for hub_name in all_hubs:
+                hub_stop = find_stop(hub_name)
+                hub_arr  = hub_arrivals.get(hub_name)
+                if not hub_stop or isinstance(hub_arr, Exception):
+                    continue
+                if hub_name == origin["name"]:   # origin IS the hub — already handled above
+                    continue
+                hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
+                to_hub    = origin_names & hub_names
+                if not to_hub or "P" not in hub_names:
+                    continue
 
-            for t in hub_arr.timings:
-                if t.name == "P":
-                    lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']} (Bus P)*")
-                    lines.append("  " + _fmt_nus_shuttle("P", hub_stop, dest_stop,
-                                                          t.arrival_time, t.next_arrival_time))
-                    break
-            lines.append("")
-            lines.append(f"[open in Google Maps]({maps_url})")
-            transfer_shown = True
-            break
+                lines.append(f"🚌 *Bus P to Bukit Timah campus*\n")
+
+                step1 = sorted(to_hub)[0]
+                for t in origin_arrivals.timings:
+                    if t.name == step1:
+                        lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")
+                        lines.append("  " + _fmt_nus_shuttle(step1, origin, hub_stop,
+                                                              t.arrival_time, t.next_arrival_time))
+                        break
+                lines.append("")
+
+                for t in hub_arr.timings:
+                    if t.name == "P":
+                        lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']} (Bus P)*")
+                        lines.append("  " + _fmt_nus_shuttle("P", hub_stop, dest_stop,
+                                                              t.arrival_time, t.next_arrival_time))
+                        break
+                lines.append("")
+                lines.append(f"[open in Google Maps]({maps_url})")
+                transfer_shown = True
+                break
 
         if not transfer_shown:
             lines.append("Bus P not available right now 💀\n")
