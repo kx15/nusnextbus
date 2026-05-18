@@ -445,16 +445,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not route:
             await query.answer(f"Route not found for {service}", show_alert=True)
             return
-        first_t, last_t = _bus_first_last(service)
         lines = [f"🚌 *Bus {service} — Route*\n"]
-        if first_t or last_t:
-            timing_line = []
-            if first_t:
-                timing_line.append(f"First: {first_t}")
-            if last_t:
-                timing_line.append(f"Last: {last_t}")
-            s0 = find_stop(route[0])
-            lines.append(f"⏰ {' · '.join(timing_line)} _(today, at {s0['caption'] if s0 else route[0]})_\n")
+        sched_lines = _bus_schedule_lines(service)
+        if sched_lines:
+            lines.extend(sched_lines)
+            lines.append("")
         for i, stop_name in enumerate(route, 1):
             stop = find_stop(stop_name)
             lines.append(f"{i}. {stop['caption'] if stop else stop_name}")
@@ -1289,34 +1284,137 @@ async def _route_offcampus_to_campus(
     lines.append(f"[open in Google Maps]({maps_url})")
 
 
-# Bus operating schedules: {"weekday": (first, last), "weekend": (first, last)}
-# weekday = Mon–Sat, weekend = Sun/PH
-_BUS_SCHEDULE: dict[str, dict[str, tuple[str, str]]] = {
-    "A1": {"weekday": ("07:15", "23:00"), "weekend": ("09:07", "23:00")},
+# Bus operating schedules.
+# Keys: "mon_fri", "saturday", "mon_sat" (Mon–Sat), "sun_ph" (Sun/PH), "weekday" (legacy Mon–Sat).
+# A value of None for "sun_ph" means no service on Sunday/PH.
+_BUS_SCHEDULE: dict[str, dict] = {
+    "A1": {
+        "mon_sat": ("07:15", "23:00"),
+        "sun_ph":  ("09:07", "23:00"),
+    },
+    "A2": {
+        "mon_sat": ("07:15", "23:00"),
+        "sun_ph":  ("09:00", "23:00"),
+    },
+    "D1": {
+        "mon_fri":  ("07:15 _(term)_ / 07:20 _(vac)_", "23:00"),
+        "saturday": ("07:20", "23:00"),
+        "sun_ph":   ("09:10", "23:00"),
+    },
+    "D2": {
+        "mon_sat": ("07:15", "23:00"),
+        "sun_ph":  ("09:00", "23:00"),
+    },
+    "K": {
+        "mon_fri":  ("07:04", "23:04"),
+        "saturday": ("07:04", "19:44"),
+        "sun_ph":   None,  # No service 💀
+    },
+    "P": {
+        "mon_fri":  ("08:20", "17:25"),
+        "saturday": None,  # No service 💀
+        "sun_ph":   None,  # No service 💀
+    },
+    "R1": {
+        "mon_fri":  ("07:40", "19:30"),
+        "saturday": None,  # No service 💀
+        "sun_ph":   None,  # No service 💀
+    },
+    "R2": {
+        "mon_fri":  ("08:20", "19:30"),
+        "saturday": None,  # No service 💀
+        "sun_ph":   None,  # No service 💀
+    },
 }
 
 
+def _bus_schedule_lines(service: str) -> list[str]:
+    """Return one formatted line per day-band for the full operating schedule."""
+    sched = _BUS_SCHEDULE.get(service)
+    if not sched:
+        return []
+
+    def _fmt(label: str, times) -> str:
+        if times is None:
+            return f"⏰ *{label}*  No service 💀"
+        first, last = times
+        return f"⏰ *{label}*  First {first} · Last {last}"
+
+    lines: list[str] = []
+    has_mon_sat  = "mon_sat"  in sched or "weekday" in sched
+    has_mon_fri  = "mon_fri"  in sched
+    has_saturday = "saturday" in sched
+    has_sun_ph   = "sun_ph"   in sched or "weekend" in sched
+
+    if has_mon_sat:
+        key = "mon_sat" if "mon_sat" in sched else "weekday"
+        lines.append(_fmt("Mon–Sat", sched[key]))
+    elif has_mon_fri:
+        lines.append(_fmt("Mon–Fri", sched["mon_fri"]))
+        if has_saturday:
+            sat_val = sched["saturday"]
+            sun_val = sched.get("sun_ph") if "sun_ph" in sched else sched.get("weekend")
+            # Collapse into one line when both weekend days are no service
+            if sat_val is None and sun_val is None and has_sun_ph:
+                lines.append(_fmt("Sat/Sun/PH", None))
+                return lines
+            lines.append(_fmt("Sat", sat_val))
+
+    if has_sun_ph:
+        key = "sun_ph" if "sun_ph" in sched else "weekend"
+        lines.append(_fmt("Sun/PH", sched[key]))
+
+    return lines
+
+
 def _bus_first_last(service: str) -> tuple[Optional[str], Optional[str]]:
-    """Return (first_bus, last_bus) for today based on hardcoded schedule."""
+    """Return (first_bus, last_bus) for today. Returns ("no_service", None) when no service today."""
     sched = _BUS_SCHEDULE.get(service)
     if not sched:
         return None, None
-    # weekday = Mon(0)–Sat(5), weekend = Sun(6) / PH
-    dow = datetime.now(timezone(timedelta(hours=8))).weekday()
-    key = "weekend" if dow == 6 else "weekday"
-    first, last = sched.get(key, (None, None))
-    return first, last
+    dow = datetime.now(timezone(timedelta(hours=8))).weekday()  # 0=Mon … 5=Sat, 6=Sun
+    if dow == 6:  # Sunday / PH
+        if "sun_ph" in sched:
+            times = sched["sun_ph"]
+            if times is None:
+                return "no_service", None
+        else:
+            times = sched.get("weekend")
+    elif dow == 5:  # Saturday
+        if "saturday" in sched:
+            times = sched["saturday"]
+            if times is None:
+                return "no_service", None
+        else:
+            times = sched.get("mon_sat") or sched.get("weekday")
+    else:  # Mon–Fri
+        times = (sched.get("mon_fri")
+                 or sched.get("mon_sat")
+                 or sched.get("weekday"))
+    if times is None:
+        return None, None
+    return times
 
 
 async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         names = sorted(_NUS_ROUTES.keys())
+        lines = ["🚌 *NUS Bus Services*\n"]
+        for name in names:
+            first, last = _bus_first_last(name)
+            if first == "no_service":
+                lines.append(f"*{name}* — no service today 💀")
+            elif first and last:
+                lines.append(f"*{name}* — {first} – {last}")
+            else:
+                lines.append(f"*{name}*")
+        lines.append("\nTap a service to see its route:")
         buttons = [
             [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
             for name in names
         ]
         await update.message.reply_text(
-            "🚌 *NUS Bus Services*\nTap a service to see its route:",
+            "\n".join(lines),
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
@@ -1332,16 +1430,11 @@ async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    first_t, last_t = _bus_first_last(service)
-
     lines = [f"🚌 *Bus {service} — Route*\n"]
-    if first_t or last_t:
-        timing_line = []
-        if first_t:
-            timing_line.append(f"First: {first_t}")
-        if last_t:
-            timing_line.append(f"Last: {last_t}")
-        lines.append(f"⏰ {' · '.join(timing_line)} _(today, at {find_stop(route[0])['caption'] if find_stop(route[0]) else route[0]})_\n")
+    sched_lines = _bus_schedule_lines(service)
+    if sched_lines:
+        lines.extend(sched_lines)
+        lines.append("")
 
     for i, stop_name in enumerate(route, 1):
         stop = find_stop(stop_name)
