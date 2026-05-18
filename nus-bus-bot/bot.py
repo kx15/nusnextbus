@@ -1399,22 +1399,12 @@ def _bus_first_last(service: str) -> tuple[Optional[str], Optional[str]]:
 async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         names = sorted(_NUS_ROUTES.keys())
-        lines = ["🚌 *NUS Bus Services*\n"]
-        for name in names:
-            first, last = _bus_first_last(name)
-            if first == "no_service":
-                lines.append(f"*{name}* — no service today 💀")
-            elif first and last:
-                lines.append(f"*{name}* — {first} – {last}")
-            else:
-                lines.append(f"*{name}*")
-        lines.append("\nTap a service to see its route:")
         buttons = [
             [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
             for name in names
         ]
         await update.message.reply_text(
-            "\n".join(lines),
+            "🚌 *NUS Bus Services*\n  Tap a service to see its route:",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
