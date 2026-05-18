@@ -441,11 +441,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif data.startswith("bus:"):
         service = data.split(":", 1)[1]
         await query.answer()
-        if service not in _NUS_ROUTES:
+        route = _NUS_ROUTES.get(service)
+        if not route:
             await query.answer(f"Route not found for {service}", show_alert=True)
             return
-        # Send route map image + stop list as new message below buttons
-        await _send_bus_route(query.message, service)
+        lines = [f"🚌 *Bus {service} — Route*\n"]
+        for i, stop_name in enumerate(route, 1):
+            stop = find_stop(stop_name)
+            caption = stop["caption"] if stop else stop_name
+            lines.append(f"{i}. {caption}")
+        # Send route as a new message below — buttons stay intact above
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="\n".join(lines),
+            parse_mode="Markdown",
+        )
 
 
 async def _resolve_location(query: str) -> tuple:
@@ -1271,44 +1281,9 @@ async def _route_offcampus_to_campus(
     lines.append(f"[open in Google Maps]({maps_url})")
 
 
-_BUS_ROUTE_IMAGES: dict[str, str] = {
-    "A1": "https://uci.nus.edu.sg/wp-content/uploads/2024/08/2024-08-ISB-A1-map.png",
-    "A2": "https://uci.nus.edu.sg/wp-content/uploads/2024/08/2024-08-ISB-A2-map.png",
-    "D1": "https://uci.nus.edu.sg/wp-content/uploads/2024/08/2024-08-ISB-D1-map.png",
-    "D2": "https://uci.nus.edu.sg/wp-content/uploads/2024/08/2024-08-ISB-D2-map.png",
-    "K":  "https://uci.nus.edu.sg/wp-content/uploads/2024/08/2024-08-ISB-K-map.png",
-    "P":  "https://uci.nus.edu.sg/wp-content/uploads/2025/11/P-map.png",
-    "R1": "https://uci.nus.edu.sg/wp-content/uploads/2025/11/R1-map.png",
-    "R2": "https://uci.nus.edu.sg/wp-content/uploads/2025/11/R2-map.png",
-}
-
-
-async def _send_bus_route(message, service: str) -> None:
-    """Send route map image + stop list for a given NUS bus service."""
-    route = _NUS_ROUTES.get(service)
-    if not route:
-        available = ", ".join(sorted(_NUS_ROUTES.keys()))
-        await message.reply_text(
-            f"Unknown service *{service}*.\nAvailable: {available}",
-            parse_mode="Markdown",
-        )
-        return
-
-    lines = [f"🚌 *Bus {service} — Route*\n"]
-    for i, stop_name in enumerate(route, 1):
-        stop = find_stop(stop_name)
-        lines.append(f"{i}. {stop['caption'] if stop else stop_name}")
-    text = "\n".join(lines)
-
-    img_url = _BUS_ROUTE_IMAGES.get(service)
-    if img_url:
-        await message.reply_photo(photo=img_url, caption=text, parse_mode="Markdown")
-    else:
-        await message.reply_text(text, parse_mode="Markdown")
-
-
 async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
+        # List all services
         names = sorted(_NUS_ROUTES.keys())
         buttons = [
             [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
@@ -1321,7 +1296,22 @@ async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    await _send_bus_route(update.message, context.args[0].upper())
+    service = context.args[0].upper()
+    route = _NUS_ROUTES.get(service)
+    if not route:
+        available = ", ".join(sorted(_NUS_ROUTES.keys()))
+        await update.message.reply_text(
+            f"Unknown service *{service}*.\nAvailable: {available}",
+            parse_mode="Markdown",
+        )
+        return
+
+    lines = [f"🚌 *Bus {service} — Route*\n"]
+    for i, stop_name in enumerate(route, 1):
+        stop = find_stop(stop_name)
+        caption = stop["caption"] if stop else stop_name
+        lines.append(f"{i}. {caption}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def plan_got_dest_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
