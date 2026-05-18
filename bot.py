@@ -91,9 +91,9 @@ def _direction_keyboard(prefix: str, page: int = 0) -> InlineKeyboardMarkup:
 
     nav = []
     if has_prev:
-        nav.append(InlineKeyboardButton("← Back", callback_data=f"{prefix}_page:{page - 1}"))
+        nav.append(InlineKeyboardButton("⬅️ Back", callback_data=f"{prefix}_page:{page - 1}"))
     if has_next:
-        nav.append(InlineKeyboardButton("More stops →", callback_data=f"{prefix}_page:{page + 1}"))
+        nav.append(InlineKeyboardButton("More stops ➡️", callback_data=f"{prefix}_page:{page + 1}"))
     if nav:
         rows.append(nav)
 
@@ -257,7 +257,7 @@ async def nearby_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def stops_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Select a bus stop:",
-        reply_markup=stops_keyboard(0),
+        reply_markup=_direction_keyboard("stop"),
     )
 
 
@@ -302,7 +302,7 @@ async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not context.args:
         await update.message.reply_text(
             "Select a bus stop:",
-            reply_markup=stops_keyboard(0),
+            reply_markup=_direction_keyboard("stop"),
         )
         return
     query = " ".join(context.args)
@@ -331,11 +331,16 @@ async def arrivals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data
-    if data.startswith("page:"):
+    if data.startswith("stop_page:"):
         await query.answer()
         page = int(data.split(":", 1)[1])
-        await query.edit_message_text(
-            "Select a bus stop:",
+        await query.edit_message_reply_markup(
+            reply_markup=_direction_keyboard("stop", page),
+        )
+    elif data.startswith("page:"):
+        await query.answer()
+        page = int(data.split(":", 1)[1])
+        await query.edit_message_reply_markup(
             reply_markup=stops_keyboard(page),
         )
     elif data.startswith("stop:"):
