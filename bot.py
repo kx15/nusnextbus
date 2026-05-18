@@ -809,6 +809,8 @@ _BUS_P_HUBS_DEPARTURE = ["KR-MRT", "UTOWN", "MUSEUM"]
 _COMPANION_STOPS: dict[str, str] = {
     "KR-MRT":     "KR-MRT-OPP",
     "KR-MRT-OPP": "KR-MRT",
+    "LT27":       "S17",
+    "S17":        "LT27",
 }
 
 
