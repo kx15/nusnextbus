@@ -881,12 +881,17 @@ async def _route_on_campus(
             lines.append(f"🚌 *From Bukit Timah campus via Bus P*\n")
 
             # Step 1: Bus P from origin to primary hub
-            for t in origin_arrivals.timings:
-                if t.name == "P":
-                    lines.append(f"*① {origin['caption']} → {hub_stop['caption']} (Bus P)*")
-                    lines.append("  " + _fmt_nus_shuttle("P", origin, hub_stop,
-                                                          t.arrival_time, t.next_arrival_time))
-                    break
+            # Collect all P entries — API sometimes returns one per vehicle.
+            # Use T1 of first, and T1 of second vehicle as Next when next_arrival is blank.
+            p_timings = [t for t in origin_arrivals.timings if t.name == "P"]
+            if p_timings:
+                t1  = p_timings[0]
+                arr = t1.arrival_time
+                nxt = (t1.next_arrival_time
+                       if t1.next_arrival_time and t1.next_arrival_time != "-"
+                       else (p_timings[1].arrival_time if len(p_timings) > 1 else "-"))
+                lines.append(f"*① {origin['caption']} → {hub_stop['caption']} (Bus P)*")
+                lines.append("  " + _fmt_nus_shuttle("P", origin, hub_stop, arr, nxt))
             if use_companion:
                 lines.append(f"  _cross the road to {step2_stop['caption']}_")
             lines.append("")
