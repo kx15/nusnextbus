@@ -1488,6 +1488,8 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text("something went wrong, try /plan again")
         return ConversationHandler.END
 
+    o_lat, o_lng = origin_loc
+
     dest_stop        = None
     dest_lat         = dest_lng = None
     dest_label       = None
@@ -1521,7 +1523,6 @@ async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return PLAN_DEST
 
     origin_label = origin["caption"] if origin else "your location"
-    o_lat, o_lng = origin_loc
 
     context.user_data.pop("plan_origin", None)
     context.user_data.pop("plan_origin_loc", None)
