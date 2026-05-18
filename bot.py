@@ -653,10 +653,11 @@ async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["plan_origin"] = origin
     context.user_data["plan_origin_loc"] = (loc.latitude, loc.longitude)
 
+    await update.message.reply_text("📍 got your location", reply_markup=ReplyKeyboardRemove())
     await update.message.reply_text(
-        "📍 got your location\n\nwhere are you going? 🏫\n_type a place or stop name_",
+        "where are you going? 🏫\nTap a stop or type any location 👇",
         parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=_direction_keyboard("plan_to"),
     )
     return PLAN_DEST
 
@@ -1224,6 +1225,37 @@ async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def plan_got_dest_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle stop-picker button tap in the /plan destination step."""
+    query = update.callback_query
+    await query.answer()
+
+    origin     = context.user_data.pop("plan_origin", None)
+    origin_loc = context.user_data.pop("plan_origin_loc", None)
+
+    if not origin_loc:
+        await query.edit_message_text("session expired, try /plan again")
+        return ConversationHandler.END
+
+    stop_name = query.data.split(":", 1)[1]
+    d_stop = find_stop(stop_name)
+    if not d_stop:
+        await query.answer("stop not found — type it instead", show_alert=True)
+        return PLAN_DEST
+
+    o_lat, o_lng = origin_loc
+    o_label = origin["caption"] if origin else "your location"
+
+    await query.edit_message_text(
+        f"📍 *{o_label} → {d_stop['caption']}*\nplanning route…", parse_mode="Markdown"
+    )
+    await _run_plan(
+        query.message, origin, o_lat, o_lng, o_label,
+        d_stop, d_stop["lat"], d_stop["lng"], d_stop["caption"], True,
+    )
+    return ConversationHandler.END
+
+
 async def plan_got_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     origin     = context.user_data.get("plan_origin")
     origin_loc = context.user_data.get("plan_origin_loc")
@@ -1348,6 +1380,7 @@ def main() -> None:
         states={
             PLAN_ORIGIN: [MessageHandler(filters.LOCATION, plan_got_origin)],
             PLAN_DEST: [
+                CallbackQueryHandler(plan_got_dest_stop, pattern=r"^plan_to:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, plan_got_dest),
                 MessageHandler(filters.LOCATION, plan_got_dest),
             ],
