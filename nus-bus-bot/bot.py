@@ -990,8 +990,6 @@ async def _route_on_campus(
             step2_stop     = find_stop(step2_name) or hub_stop
             step2_arr      = best["comp_arr"]   if use_companion else hub_arr
 
-            lines.append(f"🚌 *From Bukit Timah campus via Bus P*\n")
-
             # Step 1: Bus P from origin to primary hub
             # Collect all P entries — API sometimes returns one per vehicle.
             # Use T1 of first, and T1 of second vehicle as Next when next_arrival is blank.
