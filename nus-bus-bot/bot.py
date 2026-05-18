@@ -1067,9 +1067,9 @@ async def _route_on_campus(
                 if (not to_hub or "P" not in hub_names
                         or _nus_stops_between("P", hub_name, dest_stop["name"]) is None):
                     continue
-                # Only use hub if Bus P has a live timing there
+                # Get P timing at hub (may be "–" if between runs)
                 p_hub_timing = next((t for t in hub_arr.timings if t.name == "P"), None)
-                if not p_hub_timing or p_hub_timing.arrival_time == "-":
+                if not p_hub_timing:
                     continue
 
                 step1 = sorted(to_hub)[0]
