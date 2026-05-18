@@ -1028,8 +1028,9 @@ async def _route_on_campus(
         # Arriving at Bukit Timah campus
         transfer_shown = False
 
-        # Direct Bus P from origin — no hub transfer needed
-        if "P" in origin_names and "P" in dest_names:
+        # Direct Bus P from origin — only if P travels origin→dest in forward direction
+        if ("P" in origin_names and "P" in dest_names
+                and _nus_stops_between("P", origin["name"], dest_stop["name"]) is not None):
             p_timings = [t for t in origin_arrivals.timings if t.name == "P"]
             if p_timings:
                 t1  = p_timings[0]
