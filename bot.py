@@ -831,6 +831,31 @@ def _best_dest_stop(o_stop_name: str, candidates: list) -> Optional[dict]:
     return best_stop
 
 
+def _find_transfers(origin_name: str, dest_name: str) -> list[tuple[str, str, str, int]]:
+    """Find 1-transfer journeys (bus1, transfer_stop, bus2, total_stops), fewest stops first."""
+    seen: dict[tuple[str, str, str], int] = {}
+    for stop in STOPS:
+        mid = stop["name"]
+        if mid in (origin_name, dest_name):
+            continue
+        for bus1 in _NUS_ROUTES:
+            n1 = _nus_stops_between(bus1, origin_name, mid)
+            if n1 is None:
+                continue
+            for bus2 in _NUS_ROUTES:
+                n2 = _nus_stops_between(bus2, mid, dest_name)
+                if n2 is None:
+                    continue
+                key = (bus1, mid, bus2)
+                total = n1 + n2
+                if key not in seen or total < seen[key]:
+                    seen[key] = total
+    return sorted(
+        [(b1, mid, b2, sc) for (b1, mid, b2), sc in seen.items()],
+        key=lambda x: x[3],
+    )
+
+
 def _fmt_nus_shuttle(bus_name: str, board_stop: dict, alight_stop: dict,
                      arrival: str, next_arrival: str) -> str:
     stops = _nus_stops_between(bus_name, board_stop["name"], alight_stop["name"])
@@ -1157,20 +1182,54 @@ async def _route_on_campus(
             lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
 
     else:
-        # Non-BT no-shuttle: walk or transit
-        walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
-        walk_m = walk.get("distance_m", 0) if (walk and not isinstance(walk, Exception)) else 0
-        if walk_m > 1000:
-            lines.append("no direct NUS bus and it's quite far to walk 💀\n")
-            lines.append("🚌 *take a public bus instead:*")
-            lines.append(f"[public transport options in Google Maps]({transit_url})")
+        # No direct NUS bus (non-BT): try 1 transfer
+        transfers = _find_transfers(origin["name"], dest_stop["name"])
+        if transfers:
+            bus1, mid_name, bus2, _ = transfers[0]
+            mid_stop = find_stop(mid_name)
+            try:
+                mid_arrivals = await get_arrivals_async(mid_name)
+            except Exception:
+                mid_arrivals = None
+            live_mid: dict = {}
+            if mid_arrivals and not isinstance(mid_arrivals, Exception):
+                for t in mid_arrivals.timings:
+                    if not t.name.strip().isdigit():
+                        live_mid[t.name] = t
+            t1 = live_timing.get(bus1)
+            t2 = live_mid.get(bus2)
+            lines.append(f"*① {origin['caption']} → {mid_stop['caption']}*")
+            lines.append("  " + _fmt_nus_shuttle(bus1, origin, mid_stop,
+                                                  t1.arrival_time if t1 else "-",
+                                                  t1.next_arrival_time if t1 else "-"))
+            lines.append("")
+            lines.append(f"*② {mid_stop['caption']} → {dest_stop['caption']}*")
+            lines.append("  " + _fmt_nus_shuttle(bus2, mid_stop, dest_stop,
+                                                  t2.arrival_time if t2 else "-",
+                                                  t2.next_arrival_time if t2 else "-"))
+            lines.append("")
+            if not dest_is_exact_stop:
+                walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+                if not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
         else:
-            lines.append("no direct NUS bus — walking instead 🚶\n")
-            if walk and not isinstance(walk, Exception) and walk.get("duration"):
-                lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
-                _fmt_steps(lines, walk.get("steps", []))
-                lines.append("")
-        lines.append(f"[open in Google Maps]({maps_url})")
+            # Truly no NUS bus option: walk or public transit
+            walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
+            walk_m = walk.get("distance_m", 0) if (walk and not isinstance(walk, Exception)) else 0
+            if walk_m > 1000:
+                lines.append("no direct NUS bus and it's quite far to walk 💀\n")
+                lines.append("🚌 *take a public bus instead:*")
+                lines.append(f"[public transport options in Google Maps]({transit_url})")
+            else:
+                lines.append("no direct NUS bus — walking instead 🚶\n")
+                if walk and not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
 
 
 async def _route_offcampus_to_campus(
