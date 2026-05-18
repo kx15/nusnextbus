@@ -445,11 +445,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not route:
             await query.answer(f"Route not found for {service}", show_alert=True)
             return
+        first_t, last_t = await _bus_first_last(service)
         lines = [f"🚌 *Bus {service} — Route*\n"]
+        if first_t or last_t:
+            timing_line = []
+            if first_t:
+                timing_line.append(f"First: {first_t}")
+            if last_t:
+                timing_line.append(f"Last: {last_t}")
+            s0 = find_stop(route[0])
+            lines.append(f"⏰ {' · '.join(timing_line)} _(today, at {s0['caption'] if s0 else route[0]})_\n")
         for i, stop_name in enumerate(route, 1):
             stop = find_stop(stop_name)
-            caption = stop["caption"] if stop else stop_name
-            lines.append(f"{i}. {caption}")
+            lines.append(f"{i}. {stop['caption'] if stop else stop_name}")
         # Send route as a new message below — buttons stay intact above
         await context.bot.send_message(
             chat_id=query.message.chat_id,
@@ -1281,9 +1289,69 @@ async def _route_offcampus_to_campus(
     lines.append(f"[open in Google Maps]({maps_url})")
 
 
+async def _bus_first_last(service: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Return (first_bus_time, last_bus_time) for today by querying the first stop
+    of the route and reading all _etas scheduled timestamps.
+    Returns (None, None) if no data available.
+    """
+    route = _NUS_ROUTES.get(service, [])
+    if not route:
+        return None, None
+
+    # Query the first unique stop (skip duplicates at start)
+    first_stop = route[0]
+    try:
+        arrivals = await get_arrivals_async(first_stop)
+    except Exception:
+        return None, None
+
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+    times: list[str] = []
+
+    for t in arrivals.timings:
+        if t.name != service:
+            continue
+        # _etas are embedded in ShuttleTiming via the API — access via raw data not available here.
+        # Fall back to arrival_time / next_arrival_time as proxies.
+        break
+
+    # Since ShuttleTiming doesn't expose _etas directly, query via the raw API
+    import os as _os
+    api_url = _os.environ.get("NEXTBUS_API_URL", "").rstrip("/")
+    auth    = _os.environ.get("NEXTBUS_BASIC_AUTH", "")
+    if not api_url or not auth:
+        return None, None
+
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{api_url}/ShuttleService?busstopname={first_stop}",
+                headers={"Authorization": f"Basic {auth}"},
+                timeout=8.0,
+            )
+            resp.raise_for_status()
+            shuttles = resp.json()["ShuttleServiceResult"]["shuttles"]
+        for s in shuttles:
+            if s.get("name") != service:
+                continue
+            for eta in s.get("_etas", []):
+                ts = eta.get("ts", "")
+                if ts.startswith(today):
+                    times.append(ts[11:16])  # HH:MM
+            break
+    except Exception:
+        return None, None
+
+    if not times:
+        return None, None
+    times_sorted = sorted(set(times))
+    return times_sorted[0], times_sorted[-1]
+
+
 async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        # List all services
         names = sorted(_NUS_ROUTES.keys())
         buttons = [
             [InlineKeyboardButton(name, callback_data=f"bus:{name}")]
@@ -1306,11 +1374,20 @@ async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    first_t, last_t = await _bus_first_last(service)
+
     lines = [f"🚌 *Bus {service} — Route*\n"]
+    if first_t or last_t:
+        timing_line = []
+        if first_t:
+            timing_line.append(f"First: {first_t}")
+        if last_t:
+            timing_line.append(f"Last: {last_t}")
+        lines.append(f"⏰ {' · '.join(timing_line)} _(today, at {find_stop(route[0])['caption'] if find_stop(route[0]) else route[0]})_\n")
+
     for i, stop_name in enumerate(route, 1):
         stop = find_stop(stop_name)
-        caption = stop["caption"] if stop else stop_name
-        lines.append(f"{i}. {caption}")
+        lines.append(f"{i}. {stop['caption'] if stop else stop_name}")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
