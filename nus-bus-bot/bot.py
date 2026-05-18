@@ -73,8 +73,10 @@ PAGE_SIZE = 10
 
 
 def _fmt_time(mins: str) -> str:
-    if not mins or mins == "-" or mins.lower() == "arr":
+    if not mins or mins == "-":
         return "–"
+    if mins.lower() == "arr":
+        return "🏃‍♂️RUN"
     return f"{mins} min"
 
 
