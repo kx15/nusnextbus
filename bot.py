@@ -113,7 +113,14 @@ def _fmt_time(mins: str) -> str:
         return "–"
     if mins.lower() == "arr":
         return "🏃‍♂️RUN"
-    return f"{mins} min"
+    try:
+        m = int(mins)
+        if m >= 60:
+            eta = datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=m)
+            return f"~{eta.strftime('%H:%M')}"
+        return f"{m} min"
+    except ValueError:
+        return f"{mins} min"
 
 
 def format_arrivals(arrivals: BusStopArrivals) -> str:
@@ -126,10 +133,15 @@ def format_arrivals(arrivals: BusStopArrivals) -> str:
     if not shuttles:
         lines.append("no buses rn... start walking bestie 💀")
     else:
+        # Merge multiple vehicle entries for the same service into one row
+        merged: dict[str, tuple[str, str]] = {}
         for t in shuttles:
+            if t.name not in merged:
+                merged[t.name] = (t.arrival_time, t.next_arrival_time)
+        for name, (first, nxt) in merged.items():
             lines.append(
-                f"\U0001f68c *{t.name}*: {_fmt_time(t.arrival_time)}"
-                f" | Next: {_fmt_time(t.next_arrival_time)}"
+                f"\U0001f68c *{name}*: {_fmt_time(first)}"
+                f" | Next: {_fmt_time(nxt)}"
             )
     return "\n".join(lines)
 
