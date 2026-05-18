@@ -1058,8 +1058,6 @@ async def _route_on_campus(
                 if not to_hub or "P" not in hub_names:
                     continue
 
-                lines.append(f"🚌 *Bus P to Bukit Timah campus*\n")
-
                 step1 = sorted(to_hub)[0]
                 for t in origin_arrivals.timings:
                     if t.name == step1:
