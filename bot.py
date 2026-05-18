@@ -1055,7 +1055,9 @@ async def _route_on_campus(
                     continue
                 hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
                 to_hub    = origin_names & hub_names
-                if not to_hub or "P" not in hub_names:
+                # Also verify P can actually travel hub→dest in forward direction
+                if (not to_hub or "P" not in hub_names
+                        or _nus_stops_between("P", hub_name, dest_stop["name"]) is None):
                     continue
 
                 step1 = sorted(to_hub)[0]
