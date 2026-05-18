@@ -1063,26 +1063,28 @@ async def _route_on_campus(
                     continue
                 hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
                 to_hub    = origin_names & hub_names
-                # Also verify P can actually travel hub→dest in forward direction
+                # Verify P travels hub→dest in forward direction
                 if (not to_hub or "P" not in hub_names
                         or _nus_stops_between("P", hub_name, dest_stop["name"]) is None):
                     continue
+                # Only use hub if Bus P has a live timing there
+                p_hub_timing = next((t for t in hub_arr.timings if t.name == "P"), None)
+                if not p_hub_timing or p_hub_timing.arrival_time == "-":
+                    continue
 
                 step1 = sorted(to_hub)[0]
-                for t in origin_arrivals.timings:
-                    if t.name == step1:
-                        lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")
-                        lines.append("  " + _fmt_nus_shuttle(step1, origin, hub_stop,
-                                                              t.arrival_time, t.next_arrival_time))
-                        break
+                step1_timing = next((t for t in origin_arrivals.timings if t.name == step1), None)
+                if step1_timing:
+                    lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")
+                    lines.append("  " + _fmt_nus_shuttle(step1, origin, hub_stop,
+                                                          step1_timing.arrival_time,
+                                                          step1_timing.next_arrival_time))
                 lines.append("")
 
-                for t in hub_arr.timings:
-                    if t.name == "P":
-                        lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']} (Bus P)*")
-                        lines.append("  " + _fmt_nus_shuttle("P", hub_stop, dest_stop,
-                                                              t.arrival_time, t.next_arrival_time))
-                        break
+                lines.append(f"*② {hub_stop['caption']} → {dest_stop['caption']} (Bus P)*")
+                lines.append("  " + _fmt_nus_shuttle("P", hub_stop, dest_stop,
+                                                      p_hub_timing.arrival_time,
+                                                      p_hub_timing.next_arrival_time))
                 lines.append("")
                 lines.append(f"[open in Google Maps]({maps_url})")
                 transfer_shown = True
