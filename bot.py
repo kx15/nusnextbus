@@ -33,6 +33,35 @@ load_dotenv()
 
 PLAN_ORIGIN, PLAN_DEST = range(2)
 NEARBY_LOCATION = 2
+DIRECTION_FROM, DIRECTION_TO = 3, 4
+
+# Common NUS stops shown as quick-pick buttons in /direction
+_DIRECTION_STOPS = [
+    ("CLB",    "Central Library"),
+    ("KR-MRT", "Kent Ridge MRT"),
+    ("UTOWN",  "UTown"),
+    ("COM3",   "COM 3"),
+    ("BIZ2",   "BIZ 2"),
+    ("PGP",    "Prince George's Park"),
+    ("YIH",    "YIH"),
+    ("MUSEUM", "Museum"),
+    ("LT27",   "LT 27"),
+    ("KRB",    "KR Bus Terminal"),
+    ("OTH",    "Oei Tiong Ham (BTC)"),
+    ("CG",     "College Green (BTC)"),
+]
+
+
+def _direction_keyboard(prefix: str) -> InlineKeyboardMarkup:
+    rows, pair = [], []
+    for stop_name, label in _DIRECTION_STOPS:
+        pair.append(InlineKeyboardButton(label, callback_data=f"{prefix}:{stop_name}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    return InlineKeyboardMarkup(rows)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -129,7 +158,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /all — every bus on campus rn\n"
         "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
         "• /plan — route planner (share location → type destination)\n"
-        "• /direction `<from> to <dest>` — quick plan e.g. `/direction CLB to UTOWN`\n"
+        "• /direction — route planner with stop picker\n"
+        "• /direction `<from> to <dest>` — quick e.g. `/direction CLB to UTOWN`\n"
         "• /bus `<service>` — NUS bus route e.g. `/bus A1`\n"
         "• /nearby — stops close to you 📍\n"
         "• /fav — your usual stops ⭐\n"
@@ -500,46 +530,119 @@ async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return PLAN_ORIGIN
 
 
-async def direction_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def direction_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Quick text mode: /direction CLB to UTOWN
     text = " ".join(context.args).strip() if context.args else ""
-    if " to " not in text.lower():
-        await update.message.reply_text(
-            "Usage: `/direction <from> to <destination>`\ne.g. `/direction CLB to UTOWN`",
+    if " to " in text.lower():
+        idx     = text.lower().index(" to ")
+        o_query = text[:idx].strip()
+        d_query = text[idx + 4:].strip()
+        if o_query and d_query:
+            o_stop, o_lat, o_lng, o_label, _, _ = await _resolve_with_candidates(o_query)
+            d_stop, d_lat, d_lng, d_label, d_is_exact, d_cands = await _resolve_with_candidates(d_query)
+            if o_lat is None:
+                await update.message.reply_text(f"couldn't find origin: *{o_query}* 😭", parse_mode="Markdown")
+                return ConversationHandler.END
+            if d_lat is None:
+                await update.message.reply_text(f"couldn't find destination: *{d_query}* 😭", parse_mode="Markdown")
+                return ConversationHandler.END
+            if d_cands:
+                context.user_data["dir_pending_origin"] = {"stop": o_stop, "lat": o_lat, "lng": o_lng, "label": o_label}
+                await _ask_which_location(update.message, context, d_cands, "dir_dest_candidates")
+            else:
+                await _run_plan(update.message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact)
+            return ConversationHandler.END
+
+    # Conversation mode: show FROM keyboard
+    await update.message.reply_text(
+        "🗺 *Direction planner*\n\nWhere are you coming *from*?\nTap a stop or type any location 👇",
+        parse_mode="Markdown",
+        reply_markup=_direction_keyboard("dir_from"),
+    )
+    return DIRECTION_FROM
+
+
+async def _direction_resolve(query_or_stop: str, is_stop_name: bool) -> tuple:
+    """Resolve a stop name or free-text query to (stop, lat, lng, label, is_exact, candidates)."""
+    if is_stop_name:
+        stop = find_stop(query_or_stop)
+        if stop:
+            return stop, stop["lat"], stop["lng"], stop["caption"], True, []
+    return await _resolve_with_candidates(query_or_stop)
+
+
+async def direction_got_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.callback_query:
+        await update.callback_query.answer()
+        stop_name = update.callback_query.data.split(":", 1)[1]
+        stop = find_stop(stop_name)
+        label = stop["caption"] if stop else stop_name
+        context.user_data.update({"dir_o_stop": stop, "dir_o_lat": stop["lat"] if stop else None,
+                                   "dir_o_lng": stop["lng"] if stop else None, "dir_o_label": label})
+        await update.callback_query.edit_message_text(
+            f"📍 From: *{label}*\n\nWhere are you going *to*?\nTap a stop or type any location 👇",
             parse_mode="Markdown",
+            reply_markup=_direction_keyboard("dir_to"),
         )
-        return
-
-    # Split on the first " to " (case-insensitive)
-    idx = text.lower().index(" to ")
-    o_query = text[:idx].strip()
-    d_query = text[idx + 4:].strip()
-
-    if not o_query or not d_query:
+    else:
+        query = update.message.text.strip()
+        o_stop, o_lat, o_lng, o_label, _, _ = await _resolve_with_candidates(query)
+        if o_lat is None:
+            await update.message.reply_text(f"couldn't find *{query}* 😭\ntry again or tap a stop above", parse_mode="Markdown")
+            return DIRECTION_FROM
+        context.user_data.update({"dir_o_stop": o_stop, "dir_o_lat": o_lat, "dir_o_lng": o_lng, "dir_o_label": o_label})
         await update.message.reply_text(
-            "Usage: `/direction <from> to <destination>`\ne.g. `/direction CLB to UTOWN`",
+            f"📍 From: *{o_label}*\n\nWhere are you going *to*?\nTap a stop or type any location 👇",
             parse_mode="Markdown",
+            reply_markup=_direction_keyboard("dir_to"),
         )
-        return
+    return DIRECTION_TO
 
-    o_stop, o_lat, o_lng, o_label, _, o_candidates = await _resolve_with_candidates(o_query)
-    d_stop, d_lat, d_lng, d_label, d_is_exact, d_candidates = await _resolve_with_candidates(d_query)
+
+async def direction_got_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    o_stop  = context.user_data.pop("dir_o_stop",  None)
+    o_lat   = context.user_data.pop("dir_o_lat",   None)
+    o_lng   = context.user_data.pop("dir_o_lng",   None)
+    o_label = context.user_data.pop("dir_o_label", "your location")
 
     if o_lat is None:
-        await update.message.reply_text(f"couldn't find origin: *{o_query}* 😭", parse_mode="Markdown")
-        return
-    if d_lat is None:
-        await update.message.reply_text(f"couldn't find destination: *{d_query}* 😭", parse_mode="Markdown")
-        return
+        msg = update.callback_query.message if update.callback_query else update.message
+        await msg.reply_text("session expired, try /direction again")
+        return ConversationHandler.END
 
-    # If destination is ambiguous, ask user to pick before routing
-    if d_candidates:
-        context.user_data["dir_pending_origin"] = {
-            "stop": o_stop, "lat": o_lat, "lng": o_lng, "label": o_label,
-        }
-        await _ask_which_location(update.message, context, d_candidates, "dir_dest_candidates")
-        return
+    if update.callback_query:
+        await update.callback_query.answer()
+        stop_name  = update.callback_query.data.split(":", 1)[1]
+        d_stop     = find_stop(stop_name)
+        d_lat      = d_stop["lat"]     if d_stop else None
+        d_lng      = d_stop["lng"]     if d_stop else None
+        d_label    = d_stop["caption"] if d_stop else stop_name
+        d_is_exact = True
+        await update.callback_query.edit_message_text(
+            f"📍 *{o_label} → {d_label}*\nplanning route…", parse_mode="Markdown"
+        )
+        message = update.callback_query.message
+    else:
+        query = update.message.text.strip()
+        d_stop, d_lat, d_lng, d_label, d_is_exact, d_cands = await _resolve_with_candidates(query)
+        if d_lat is None:
+            await update.message.reply_text(f"couldn't find *{query}* 😭\ntry again or tap a stop above", parse_mode="Markdown")
+            return DIRECTION_TO
+        if d_cands:
+            context.user_data.update({"dir_o_stop": o_stop, "dir_o_lat": o_lat, "dir_o_lng": o_lng, "dir_o_label": o_label})
+            await _ask_which_location(update.message, context, d_cands, "dir_dest_candidates")
+            return DIRECTION_TO
+        message = update.message
 
-    await _run_plan(update.message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact)
+    await _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng, d_label, d_is_exact)
+    return ConversationHandler.END
+
+
+async def direction_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    for k in ("dir_o_stop", "dir_o_lat", "dir_o_lng", "dir_o_label"):
+        context.user_data.pop(k, None)
+    await update.message.reply_text("cancelled 👍")
+    return ConversationHandler.END
 
 
 async def plan_got_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1217,7 +1320,7 @@ async def post_init(app: Application) -> None:
         BotCommand("all",      "All bus arrivals"),
         BotCommand("arrivals", "Select stop to get arrival time"),
         BotCommand("plan",      "Route planner via location sharing"),
-        BotCommand("direction", "Quick route e.g. /direction CLB to UTOWN"),
+        BotCommand("direction", "Route planner with stop picker"),
         BotCommand("bus",       "NUS bus route e.g. /bus A1"),
         BotCommand("nearby",    "Find stops near you 📍"),
         BotCommand("fav",       "Your favourite stops"),
@@ -1258,7 +1361,22 @@ def main() -> None:
     app.add_handler(CommandHandler("all",      all_command))
     app.add_handler(CommandHandler("stops",    stops_command))
     app.add_handler(CommandHandler("arrivals",   arrivals_command))
-    app.add_handler(CommandHandler(["direction", "destination"],  direction_command))
+    direction_handler = ConversationHandler(
+        entry_points=[CommandHandler(["direction", "destination"], direction_start)],
+        states={
+            DIRECTION_FROM: [
+                CallbackQueryHandler(direction_got_from, pattern=r"^dir_from:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, direction_got_from),
+            ],
+            DIRECTION_TO: [
+                CallbackQueryHandler(direction_got_to, pattern=r"^dir_to:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, direction_got_to),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", direction_cancel)],
+        allow_reentry=True,
+    )
+    app.add_handler(direction_handler)
     app.add_handler(CommandHandler("bus",        bus_command))
     app.add_handler(CommandHandler("debugplan",  debugplan_command))
     app.add_handler(nearby_handler)
