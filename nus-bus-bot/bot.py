@@ -843,12 +843,8 @@ def _best_dest_stop(o_stop_name: str, candidates: list) -> Optional[dict]:
     return best_stop
 
 
-_MAIN_SERVICES = frozenset({"A1", "A2", "D1", "D2"})
-
-
 def _find_transfers(origin_name: str, dest_name: str) -> list[tuple[str, str, str, int]]:
-    """Find 1-transfer journeys (bus1, transfer_stop, bus2, total_stops).
-    Sorted by total stops, then by preference for main services (A1/A2/D1/D2)."""
+    """Find 1-transfer journeys (bus1, transfer_stop, bus2, total_stops), fewest stops first."""
     seen: dict[tuple[str, str, str], int] = {}
     for stop in STOPS:
         mid = stop["name"]
@@ -866,15 +862,9 @@ def _find_transfers(origin_name: str, dest_name: str) -> list[tuple[str, str, st
                 total = n1 + n2
                 if key not in seen or total < seen[key]:
                     seen[key] = total
-
-    def _score(item: tuple) -> tuple:
-        b1, _, b2, stops = item
-        non_main = (0 if b1 in _MAIN_SERVICES else 1) + (0 if b2 in _MAIN_SERVICES else 1)
-        return (stops, non_main)
-
     return sorted(
         [(b1, mid, b2, sc) for (b1, mid, b2), sc in seen.items()],
-        key=_score,
+        key=lambda x: x[3],
     )
 
 
@@ -1207,7 +1197,22 @@ async def _route_on_campus(
         # No direct NUS bus (non-BT): try 1 transfer
         transfers = _find_transfers(origin["name"], dest_stop["name"])
         if transfers:
-            bus1, mid_name, bus2, _ = transfers[0]
+            min_stops = transfers[0][3]
+            tied = [t for t in transfers if t[3] == min_stops]
+
+            def _earliest_bus1(item: tuple) -> float:
+                b1 = item[0]
+                t = live_timing.get(b1)
+                if not t or not t.arrival_time or t.arrival_time == "-":
+                    return float("inf")
+                if t.arrival_time.lower() == "arr":
+                    return 0.0
+                try:
+                    return float(t.arrival_time)
+                except ValueError:
+                    return float("inf")
+
+            bus1, mid_name, bus2, _ = min(tied, key=_earliest_bus1)
             mid_stop = find_stop(mid_name)
             try:
                 mid_arrivals = await get_arrivals_async(mid_name)
