@@ -1016,7 +1016,10 @@ async def _route_on_campus(
     )
 
     if common:
-        # Check if crossing to companion gives a shorter direct route
+        _direct_min = min(
+            _nus_stops_between(bus, origin["name"], dest_stop["name"]) for bus in route_buses
+        )
+        # Option A: cross origin's companion, then direct to dest
         _co = _COMPANION_STOPS.get(origin["name"])
         _co_stop = find_stop(_co) if _co else None
         _co_direct: list[str] = sorted(
@@ -1026,11 +1029,20 @@ async def _route_on_campus(
         _co_min = min(
             _nus_stops_between(bus, _co, dest_stop["name"]) for bus in _co_direct
         ) if _co_direct else 999
-        _direct_min = min(
-            _nus_stops_between(bus, origin["name"], dest_stop["name"]) for bus in route_buses
-        )
+        # Option B: direct to dest's companion, then cross road
+        _dest_co = _COMPANION_STOPS.get(dest_stop["name"])
+        _dest_co_stop = find_stop(_dest_co) if _dest_co else None
+        _dest_co_buses: list[str] = sorted(
+            bus for bus in _NUS_ROUTES
+            if _dest_co and _nus_stops_between(bus, origin["name"], _dest_co) is not None
+        ) if _dest_co else []
+        _dest_co_min = min(
+            _nus_stops_between(bus, origin["name"], _dest_co)
+            for bus in _dest_co_buses
+        ) if _dest_co_buses else 999
 
-        if _co_direct and _co_min < _direct_min:
+        if _co_direct and _co_min < _direct_min and _co_min <= _dest_co_min:
+            # Cross origin's companion → direct to dest
             _live_co: dict = {}
             try:
                 _co_arr = await get_arrivals_async(_co)
@@ -1053,6 +1065,25 @@ async def _route_on_campus(
                     _fmt_steps(lines, walk.get("steps", []))
                     lines.append("")
             lines.append(f"[open in Google Maps]({maps_url})")
+
+        elif _dest_co_buses and _dest_co_min < _direct_min:
+            # Direct to dest's companion → cross road to dest
+            lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {_dest_co_stop['caption']}*")
+            for bus_name in _dest_co_buses:
+                t = live_timing.get(bus_name)
+                lines.append("  " + _fmt_nus_shuttle(bus_name, origin, _dest_co_stop,
+                                                      t.arrival_time if t else "-",
+                                                      t.next_arrival_time if t else "-"))
+            lines.append(f"  _cross the road to {dest_stop['caption']}_")
+            lines.append("")
+            if not dest_is_exact_stop:
+                walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+                if not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+
         else:
             # Show all valid buses; use live timing where available
             lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*")
