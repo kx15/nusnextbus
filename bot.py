@@ -1054,6 +1054,20 @@ async def _route_on_campus(
             # Score via companion stop (cross the road — same physical location)
             comp_name = _COMPANION_STOPS.get(hub_name)
             comp_arr  = hub_arrivals.get(comp_name) if comp_name else None
+
+            # Destination IS the companion of this hub — P to hub then cross road, no step 2 bus
+            if comp_name == dest_stop["name"]:
+                score = p_to_hub
+                if score < best_score:
+                    best_score = score
+                    best = {
+                        "hub": hub_stop, "hub_arr": hub_arr, "hub_name": hub_name,
+                        "to_dest": set(), "use_companion": True,
+                        "comp_name": comp_name, "comp_arr": comp_arr,
+                        "direct_to_dest": True,
+                    }
+                continue
+
             to_dest_comp = set()
             min_comp = 999
             if comp_name and comp_arr and not isinstance(comp_arr, Exception):
@@ -1096,6 +1110,7 @@ async def _route_on_campus(
             hub_name       = best["hub_name"]
             to_dest        = best["to_dest"]
             use_companion  = best["use_companion"]
+            direct_to_dest = best.get("direct_to_dest", False)
             step2_name     = best["comp_name"] if use_companion else hub_name
             step2_stop     = find_stop(step2_name) or hub_stop
             step2_arr      = best["comp_arr"]   if use_companion else hub_arr
@@ -1112,45 +1127,52 @@ async def _route_on_campus(
                        else (p_timings[1].arrival_time if len(p_timings) > 1 else "-"))
                 lines.append(f"*① {origin['caption']} → {hub_stop['caption']} (Bus P)*")
                 lines.append("  " + _fmt_nus_shuttle("P", origin, hub_stop, arr, nxt))
-            if use_companion:
-                lines.append(f"  _cross the road to {step2_stop['caption']}_")
-            lines.append("")
 
-            # Step 2: All valid connecting buses (sorted by fewest stops)
-            live_step2: dict = {}
-            if step2_arr and not isinstance(step2_arr, Exception):
-                for t in step2_arr.timings:
-                    if not t.name.strip().isdigit():
-                        live_step2[t.name] = t
-            def _eff_stops(b: str) -> int:
-                n = _nus_stops_between(b, step2_name, dest_stop["name"])
-                if n is None and _dest_comp_name:
-                    n = _nus_stops_between(b, step2_name, _dest_comp_name)
-                return n or 999
+            if direct_to_dest:
+                # Destination is the companion of the hub — just cross the road
+                lines.append(f"  _cross the road to {dest_stop['caption']}_")
+                lines.append("")
+                lines.append(f"[open in Google Maps]({maps_url})")
+            else:
+                if use_companion:
+                    lines.append(f"  _cross the road to {step2_stop['caption']}_")
+                lines.append("")
 
-            conn_buses = sorted(to_dest, key=_eff_stops)
+                # Step 2: All valid connecting buses (sorted by fewest stops)
+                live_step2: dict = {}
+                if step2_arr and not isinstance(step2_arr, Exception):
+                    for t in step2_arr.timings:
+                        if not t.name.strip().isdigit():
+                            live_step2[t.name] = t
+                def _eff_stops(b: str) -> int:
+                    n = _nus_stops_between(b, step2_name, dest_stop["name"])
+                    if n is None and _dest_comp_name:
+                        n = _nus_stops_between(b, step2_name, _dest_comp_name)
+                    return n or 999
 
-            # Compute effective alight stop per bus (companion of dest when bus doesn't serve dest directly)
-            _dest_comp_stop = find_stop(_dest_comp_name) if _dest_comp_name else None
-            bus_entries: list[tuple[str, dict]] = []
-            for bus_name in conn_buses:
-                if (_dest_comp_stop
-                        and _nus_stops_between(bus_name, step2_name, dest_stop["name"]) is None
-                        and _nus_stops_between(bus_name, step2_name, _dest_comp_name) is not None):
-                    bus_entries.append((bus_name, _dest_comp_stop))
-                else:
-                    bus_entries.append((bus_name, dest_stop))
+                conn_buses = sorted(to_dest, key=_eff_stops)
 
-            # Header uses the alight stop of the first bus
-            _header_alight = bus_entries[0][1] if bus_entries else dest_stop
-            lines.append(f"*② {step2_stop['caption']} → {_header_alight['caption']}*")
-            for bus_name, eff_alight in bus_entries:
-                td  = live_step2.get(bus_name)
-                arr = td.arrival_time      if td else "-"
-                nxt = td.next_arrival_time if td else "-"
-                lines.append("  " + _fmt_nus_shuttle(bus_name, step2_stop, eff_alight, arr, nxt))
-            lines.append("")
-            lines.append(f"[open in Google Maps]({maps_url})")
+                # Compute effective alight stop per bus (companion of dest when bus doesn't serve dest directly)
+                _dest_comp_stop = find_stop(_dest_comp_name) if _dest_comp_name else None
+                bus_entries: list[tuple[str, dict]] = []
+                for bus_name in conn_buses:
+                    if (_dest_comp_stop
+                            and _nus_stops_between(bus_name, step2_name, dest_stop["name"]) is None
+                            and _nus_stops_between(bus_name, step2_name, _dest_comp_name) is not None):
+                        bus_entries.append((bus_name, _dest_comp_stop))
+                    else:
+                        bus_entries.append((bus_name, dest_stop))
+
+                # Header uses the alight stop of the first bus
+                _header_alight = bus_entries[0][1] if bus_entries else dest_stop
+                lines.append(f"*② {step2_stop['caption']} → {_header_alight['caption']}*")
+                for bus_name, eff_alight in bus_entries:
+                    td  = live_step2.get(bus_name)
+                    arr = td.arrival_time      if td else "-"
+                    nxt = td.next_arrival_time if td else "-"
+                    lines.append("  " + _fmt_nus_shuttle(bus_name, step2_stop, eff_alight, arr, nxt))
+                lines.append("")
+                lines.append(f"[open in Google Maps]({maps_url})")
 
         if not transfer_shown:
             lines.append("Bus P not available right now 💀\n")
