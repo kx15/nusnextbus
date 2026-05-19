@@ -1068,7 +1068,14 @@ async def _route_on_campus(
             min_comp = 999
             if comp_name and comp_arr and not isinstance(comp_arr, Exception):
                 comp_bus_names = {t.name for t in comp_arr.timings if not t.name.strip().isdigit()}
-                to_dest_comp = comp_bus_names & dest_names
+                # Use route reachability (not just live dest arrivals) so buses that
+                # serve only the companion of dest (e.g. A2 → TCOMS not TCOMS-OPP) are included.
+                to_dest_comp = {
+                    bus for bus in comp_bus_names
+                    if (_nus_stops_between(bus, comp_name, dest_stop["name"]) is not None
+                        or (_dest_comp_name
+                            and _nus_stops_between(bus, comp_name, _dest_comp_name) is not None))
+                }
                 def _comp_n(bus: str) -> int:
                     n = _nus_stops_between(bus, comp_name, dest_stop["name"])
                     if n is None and _dest_comp_name:
