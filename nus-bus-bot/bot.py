@@ -808,27 +808,17 @@ _NUS_ROUTES: dict[str, list[str]] = {
 def _nus_stops_between(bus: str, board: str, alight: str) -> Optional[int]:
     """Return number of stops between board and alight for a given NUS bus, or None."""
     route = _NUS_ROUTES.get(bus, [])
-    if not route:
-        return None
-    # Circular routes (same first and last stop) — extend the search array so passengers
-    # who stay on through the terminus can reach stops earlier in the sequence.
-    is_circular = len(route) > 1 and route[0] == route[-1]
-    search = route + route[1:] if is_circular else route
-    limit = len(route)  # cap at one full loop
-
     best: Optional[int] = None
     start = 0
     while True:
         try:
-            i = search.index(board, start)
+            i = route.index(board, start)
         except ValueError:
             break
-        if i >= len(route):
-            break
         try:
-            j = search.index(alight, i + 1)
+            j = route.index(alight, i + 1)
             gap = j - i
-            if gap < limit and (best is None or gap < best):
+            if best is None or gap < best:
                 best = gap
         except ValueError:
             pass
