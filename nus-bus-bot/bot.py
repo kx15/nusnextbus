@@ -1189,9 +1189,18 @@ async def _route_on_campus(
                 break
 
         if not transfer_shown:
-            lines.append("Bus P not available right now 💀\n")
-            lines.append("🚇 *take public transport instead:*")
-            lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
+            if is_bt_origin:
+                # Both stops are Bukit Timah campus — Bus P goes the wrong way; just walk
+                walk_bt = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
+                if walk_bt and not isinstance(walk_bt, Exception) and walk_bt.get("duration"):
+                    lines.append(f"🚶 *walk*: {walk_bt['distance']} · {walk_bt['duration']}")
+                    _fmt_steps(lines, walk_bt.get("steps", []))
+                    lines.append("")
+                lines.append(f"[open in Google Maps]({maps_url})")
+            else:
+                lines.append("Bus P not available right now 💀\n")
+                lines.append("🚇 *take public transport instead:*")
+                lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
 
     else:
         # No direct NUS bus (non-BT): try 1 transfer
@@ -1332,7 +1341,8 @@ async def _route_offcampus_to_campus(
         gw_names: set = set()
         if not isinstance(arrivals, Exception):
             gw_names = {t.name for t in arrivals.timings if not t.name.strip().isdigit()}
-        common = gw_names & dest_names
+        common = {bus for bus in (gw_names & dest_names)
+                  if _nus_stops_between(bus, gateway["name"], dest_stop["name"]) is not None}
         if best is None or (common and not best["common"]):
             best = {"gateway": gateway, "transit": transit, "arrivals": arrivals, "common": common}
 
@@ -1361,23 +1371,31 @@ async def _route_offcampus_to_campus(
 
     # ② NUS shuttle to destination stop
     gw = best["gateway"]
-    lines.append(f"*② NUS shuttle: {gw['caption']} → {dest_stop['caption']}*")
     if best["common"] and not isinstance(best["arrivals"], Exception):
+        lines.append(f"*② NUS shuttle: {gw['caption']} → {dest_stop['caption']}*")
         for t in best["arrivals"].timings:
             if t.name in best["common"]:
                 lines.append(
                     "  " + _fmt_nus_shuttle(t.name, gw, dest_stop,
                                             t.arrival_time, t.next_arrival_time)
                 )
-    else:
-        lines.append("no direct NUS bus — check /arrivals for options")
-    lines.append("")
-
-    # ③ Walk to final destination
-    if walk and not isinstance(walk, Exception) and walk.get("duration"):
-        lines.append(f"*③ Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
-        _fmt_steps(lines, walk.get("steps", []))
         lines.append("")
+
+        # ③ Walk to final destination
+        if walk and not isinstance(walk, Exception) and walk.get("duration"):
+            lines.append(f"*③ Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+            _fmt_steps(lines, walk.get("steps", []))
+            lines.append("")
+    else:
+        # No valid NUS shuttle in the right direction — walk from gateway to final destination
+        walk_to_dest = await get_directions(gw["lat"], gw["lng"], dest_lat, dest_lng)
+        if walk_to_dest and not isinstance(walk_to_dest, Exception) and walk_to_dest.get("duration"):
+            lines.append(f"*② Walk to destination* — 🚶 {walk_to_dest['distance']} · {walk_to_dest['duration']}")
+            _fmt_steps(lines, walk_to_dest.get("steps", []))
+            lines.append("")
+        else:
+            lines.append("no direct NUS bus from here — check /arrivals for options")
+            lines.append("")
 
     lines.append(f"[open in Google Maps]({maps_url})")
 
