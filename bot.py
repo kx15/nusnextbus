@@ -1284,11 +1284,13 @@ async def _route_on_campus(
                     for bus in _comp_direct
                 )
 
-        # No direct NUS bus (non-BT): try 1 transfer
+        # No direct NUS bus (non-BT): try transfers from origin and from companion
         transfers = _find_transfers(origin["name"], dest_stop["name"])
         transfer_min = transfers[0][3] if transfers else 999
+        comp_transfers = _find_transfers(_orig_comp_name, dest_stop["name"]) if _orig_comp_name else []
+        comp_transfer_min = comp_transfers[0][3] if comp_transfers else 999
 
-        if _comp_direct and _comp_min <= transfer_min:
+        if _comp_direct and _comp_min <= min(transfer_min, comp_transfer_min):
             # Crossing road gives a direct or better route
             _comp_arr = await get_arrivals_async(_orig_comp_name)
             _live_comp: dict = {}
@@ -1305,6 +1307,70 @@ async def _route_on_campus(
                     _t.next_arrival_time if _t else "-",
                 ))
             lines.append("")
+            if not dest_is_exact_stop:
+                walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+                if not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+
+        elif comp_transfers and comp_transfer_min < transfer_min:
+            # Crossing to companion gives a better 1-transfer route
+            _comp_arr = await get_arrivals_async(_orig_comp_name)
+            _live_comp_timing: dict = {}
+            if not isinstance(_comp_arr, Exception):
+                for t in _comp_arr.timings:
+                    if not t.name.strip().isdigit():
+                        _live_comp_timing[t.name] = t
+
+            def _earliest_comp_b1(item: tuple) -> float:
+                b1 = item[0]
+                t = _live_comp_timing.get(b1)
+                if not t or not t.arrival_time or t.arrival_time == "-":
+                    return float("inf")
+                if t.arrival_time.lower() == "arr":
+                    return 0.0
+                try:
+                    return float(t.arrival_time)
+                except ValueError:
+                    return float("inf")
+
+            comp_tied = [t for t in comp_transfers if t[3] == comp_transfer_min]
+            comp_options = sorted(comp_tied, key=_earliest_comp_b1)[:2]
+            unique_comp_mids = list({mid for _, mid, _, _ in comp_options})
+            comp_mid_results = await asyncio.gather(
+                *[get_arrivals_async(m) for m in unique_comp_mids],
+                return_exceptions=True,
+            )
+            live_comp_mid_map: dict[str, dict] = {}
+            for mid_name, result in zip(unique_comp_mids, comp_mid_results):
+                timing_map: dict = {}
+                if not isinstance(result, Exception):
+                    for t in result.timings:
+                        if not t.name.strip().isdigit():
+                            timing_map[t.name] = t
+                live_comp_mid_map[mid_name] = timing_map
+
+            lines.append(f"_cross the road to {_orig_comp_stop['caption']}_")
+            lines.append("")
+            comp_labels = ["*Option A*", "*Option B*"] if len(comp_options) > 1 else [""]
+            for label, (bus1, mid_name, bus2, _) in zip(comp_labels, comp_options):
+                mid_stop = find_stop(mid_name)
+                live_mid = live_comp_mid_map.get(mid_name, {})
+                t1 = _live_comp_timing.get(bus1)
+                t2 = live_mid.get(bus2)
+                if label:
+                    lines.append(label)
+                lines.append(f"① {_orig_comp_stop['caption']} → {mid_stop['caption']}")
+                lines.append("  " + _fmt_nus_shuttle(bus1, _orig_comp_stop, mid_stop,
+                                                      t1.arrival_time if t1 else "-",
+                                                      t1.next_arrival_time if t1 else "-"))
+                lines.append(f"② {mid_stop['caption']} → {dest_stop['caption']}")
+                lines.append("  " + _fmt_nus_shuttle(bus2, mid_stop, dest_stop,
+                                                      t2.arrival_time if t2 else "-",
+                                                      t2.next_arrival_time if t2 else "-"))
+                lines.append("")
             if not dest_is_exact_stop:
                 walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
                 if not isinstance(walk, Exception) and walk.get("duration"):
