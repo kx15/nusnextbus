@@ -1016,21 +1016,57 @@ async def _route_on_campus(
     )
 
     if common:
-        # Show all valid buses; use live timing where available, – otherwise
-        lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*")
-        for bus_name in route_buses:
-            t = live_timing.get(bus_name)
-            arr  = t.arrival_time      if t else "-"
-            nxt  = t.next_arrival_time if t else "-"
-            lines.append("  " + _fmt_nus_shuttle(bus_name, origin, dest_stop, arr, nxt))
-        lines.append("")
-        if not dest_is_exact_stop:
-            walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
-            if not isinstance(walk, Exception) and walk.get("duration"):
-                lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
-                _fmt_steps(lines, walk.get("steps", []))
-                lines.append("")
-        lines.append(f"[open in Google Maps]({maps_url})")
+        # Check if crossing to companion gives a shorter direct route
+        _co = _COMPANION_STOPS.get(origin["name"])
+        _co_stop = find_stop(_co) if _co else None
+        _co_direct: list[str] = sorted(
+            bus for bus in _NUS_ROUTES
+            if _co and _nus_stops_between(bus, _co, dest_stop["name"]) is not None
+        ) if _co else []
+        _co_min = min(
+            _nus_stops_between(bus, _co, dest_stop["name"]) for bus in _co_direct
+        ) if _co_direct else 999
+        _direct_min = min(
+            _nus_stops_between(bus, origin["name"], dest_stop["name"]) for bus in route_buses
+        )
+
+        if _co_direct and _co_min < _direct_min:
+            _co_arr = await get_arrivals_async(_co)
+            _live_co: dict = {}
+            if not isinstance(_co_arr, Exception):
+                _live_co = {t.name: t for t in _co_arr.timings if not t.name.strip().isdigit()}
+            lines.append(f"_cross the road to {_co_stop['caption']}_")
+            lines.append("")
+            lines.append(f"🚌 *NUS shuttle: {_co_stop['caption']} → {dest_stop['caption']}*")
+            for bus_name in _co_direct:
+                t = _live_co.get(bus_name)
+                lines.append("  " + _fmt_nus_shuttle(bus_name, _co_stop, dest_stop,
+                                                      t.arrival_time if t else "-",
+                                                      t.next_arrival_time if t else "-"))
+            lines.append("")
+            if not dest_is_exact_stop:
+                walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+                if not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+        else:
+            # Show all valid buses; use live timing where available
+            lines.append(f"🚌 *NUS shuttle: {origin['caption']} → {dest_stop['caption']}*")
+            for bus_name in route_buses:
+                t = live_timing.get(bus_name)
+                arr  = t.arrival_time      if t else "-"
+                nxt  = t.next_arrival_time if t else "-"
+                lines.append("  " + _fmt_nus_shuttle(bus_name, origin, dest_stop, arr, nxt))
+            lines.append("")
+            if not dest_is_exact_stop:
+                walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+                if not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
 
     elif is_bt_origin and not is_bt_dest:
         # Departing from Bukit Timah campus: Bus P to best hub, then shuttle to dest.
