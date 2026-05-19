@@ -1139,7 +1139,16 @@ async def _route_on_campus(
                 return n or 999
 
             conn_buses = sorted(to_dest, key=_eff_stops)
-            lines.append(f"*② {step2_stop['caption']} → {dest_stop['caption']}*")
+            # If every connecting bus alights at the companion of dest, show that in the header
+            _all_via_comp = (
+                bool(_dest_comp_name)
+                and all(
+                    _nus_stops_between(b, step2_name, dest_stop["name"]) is None
+                    for b in conn_buses
+                )
+            )
+            _header_dest = (find_stop(_dest_comp_name) or dest_stop) if _all_via_comp else dest_stop
+            lines.append(f"*② {step2_stop['caption']} → {_header_dest['caption']}*")
             for bus_name in conn_buses:
                 td  = live_step2.get(bus_name)
                 arr = td.arrival_time      if td else "-"
