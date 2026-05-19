@@ -1031,10 +1031,12 @@ async def _route_on_campus(
         )
 
         if _co_direct and _co_min < _direct_min:
-            _co_arr = await get_arrivals_async(_co)
             _live_co: dict = {}
-            if not isinstance(_co_arr, Exception):
+            try:
+                _co_arr = await get_arrivals_async(_co)
                 _live_co = {t.name: t for t in _co_arr.timings if not t.name.strip().isdigit()}
+            except Exception:
+                pass
             lines.append(f"_cross the road to {_co_stop['caption']}_")
             lines.append("")
             lines.append(f"🚌 *NUS shuttle: {_co_stop['caption']} → {dest_stop['caption']}*")
