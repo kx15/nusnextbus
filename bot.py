@@ -56,10 +56,16 @@ _DIRECTION_STOP_NAMES = {name for name, _ in _DIRECTION_STOPS}
 
 
 def _direction_extra_stops() -> list[tuple[str, str]]:
-    """All STOPS not in the quick-pick list, sorted A–Z by caption."""
+    """All STOPS not in the quick-pick list, sorted A–Z by caption.
+    'Opp X' sorts immediately after 'X' so the main stop precedes its opposite side."""
+    def _key(item: tuple[str, str]) -> tuple[str, int]:
+        cap = item[1]
+        if cap.startswith("Opp "):
+            return (cap[4:], 1)
+        return (cap, 0)
     return sorted(
         [(s["name"], s["caption"]) for s in STOPS if s["name"] not in _DIRECTION_STOP_NAMES],
-        key=lambda x: x[1],
+        key=_key,
     )
 
 
