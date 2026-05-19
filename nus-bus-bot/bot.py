@@ -1039,6 +1039,7 @@ async def _route_on_campus(
     elif is_bt_origin and not is_bt_dest:
         # Departing from Bukit Timah campus: Bus P to best hub, then shuttle to dest.
         # Score each hub by: P stops to hub + fewest connecting bus stops to dest.
+        _dest_comp_name = _COMPANION_STOPS.get(dest_stop["name"])
         best: dict | None = None
         best_score = 10_000
 
@@ -1063,7 +1064,6 @@ async def _route_on_campus(
             # Score via companion stop (cross the road — same physical location)
             comp_name = _COMPANION_STOPS.get(hub_name)
             comp_arr  = hub_arrivals.get(comp_name) if comp_name else None
-            _dest_comp_name = _COMPANION_STOPS.get(dest_stop["name"])
             to_dest_comp = set()
             min_comp = 999
             if comp_name and comp_arr and not isinstance(comp_arr, Exception):
@@ -1139,27 +1139,25 @@ async def _route_on_campus(
                 return n or 999
 
             conn_buses = sorted(to_dest, key=_eff_stops)
-            # If every connecting bus alights at the companion of dest, show that in the header
-            _all_via_comp = (
-                bool(_dest_comp_name)
-                and all(
-                    _nus_stops_between(b, step2_name, dest_stop["name"]) is None
-                    for b in conn_buses
-                )
-            )
-            _header_dest = (find_stop(_dest_comp_name) or dest_stop) if _all_via_comp else dest_stop
-            lines.append(f"*② {step2_stop['caption']} → {_header_dest['caption']}*")
+
+            # Compute effective alight stop per bus (companion of dest when bus doesn't serve dest directly)
+            _dest_comp_stop = find_stop(_dest_comp_name) if _dest_comp_name else None
+            bus_entries: list[tuple[str, dict]] = []
             for bus_name in conn_buses:
+                if (_dest_comp_stop
+                        and _nus_stops_between(bus_name, step2_name, dest_stop["name"]) is None
+                        and _nus_stops_between(bus_name, step2_name, _dest_comp_name) is not None):
+                    bus_entries.append((bus_name, _dest_comp_stop))
+                else:
+                    bus_entries.append((bus_name, dest_stop))
+
+            # Header uses the alight stop of the first bus
+            _header_alight = bus_entries[0][1] if bus_entries else dest_stop
+            lines.append(f"*② {step2_stop['caption']} → {_header_alight['caption']}*")
+            for bus_name, eff_alight in bus_entries:
                 td  = live_step2.get(bus_name)
                 arr = td.arrival_time      if td else "-"
                 nxt = td.next_arrival_time if td else "-"
-                # Alight at the companion of dest if the bus doesn't directly serve dest
-                eff_alight = dest_stop
-                if (_dest_comp_name
-                        and _nus_stops_between(bus_name, step2_name, dest_stop["name"]) is None):
-                    comp_stop = find_stop(_dest_comp_name)
-                    if comp_stop and _nus_stops_between(bus_name, step2_name, _dest_comp_name) is not None:
-                        eff_alight = comp_stop
                 lines.append("  " + _fmt_nus_shuttle(bus_name, step2_stop, eff_alight, arr, nxt))
             lines.append("")
             lines.append(f"[open in Google Maps]({maps_url})")
