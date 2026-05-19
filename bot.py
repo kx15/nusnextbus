@@ -26,7 +26,7 @@ from telegram.ext import (
 
 from api import BusStopArrivals, get_all_arrivals, get_arrivals_async
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
-from planner import geocode_sg, geocode_with_candidates, get_directions, get_transit_to_stop
+from planner import geocode_sg, geocode_with_candidates, get_directions, get_transit_to_stop, haversine_m
 from stops import STOPS, find_stop, nearby_stops
 
 load_dotenv()
@@ -1258,6 +1258,16 @@ async def _route_on_campus(
                 lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
 
     else:
+        # If the stops are within walking distance, don't bother with buses
+        if haversine_m(origin_loc[0], origin_loc[1], dest_lat, dest_lng) < 500:
+            walk = await get_directions(origin_loc[0], origin_loc[1], dest_lat, dest_lng)
+            if walk and not isinstance(walk, Exception) and walk.get("duration"):
+                lines.append(f"🚶 *walk*: {walk['distance']} · {walk['duration']}")
+                _fmt_steps(lines, walk.get("steps", []))
+                lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+            return
+
         # Check if crossing to the origin's companion stop gives a direct bus (fewer stops than any transfer)
         _orig_comp_name = _COMPANION_STOPS.get(origin["name"])
         _orig_comp_stop = find_stop(_orig_comp_name) if _orig_comp_name else None
