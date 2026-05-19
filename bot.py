@@ -808,17 +808,27 @@ _NUS_ROUTES: dict[str, list[str]] = {
 def _nus_stops_between(bus: str, board: str, alight: str) -> Optional[int]:
     """Return number of stops between board and alight for a given NUS bus, or None."""
     route = _NUS_ROUTES.get(bus, [])
+    if not route:
+        return None
+    # Circular routes (same first and last stop) — extend the search array so passengers
+    # who stay on through the terminus can reach stops earlier in the sequence.
+    is_circular = len(route) > 1 and route[0] == route[-1]
+    search = route + route[1:] if is_circular else route
+    limit = len(route)  # cap at one full loop
+
     best: Optional[int] = None
     start = 0
     while True:
         try:
-            i = route.index(board, start)
+            i = search.index(board, start)
         except ValueError:
             break
+        if i >= len(route):
+            break
         try:
-            j = route.index(alight, i + 1)
+            j = search.index(alight, i + 1)
             gap = j - i
-            if best is None or gap < best:
+            if gap < limit and (best is None or gap < best):
                 best = gap
         except ValueError:
             pass
@@ -1053,15 +1063,18 @@ async def _route_on_campus(
             # Score via companion stop (cross the road — same physical location)
             comp_name = _COMPANION_STOPS.get(hub_name)
             comp_arr  = hub_arrivals.get(comp_name) if comp_name else None
+            _dest_comp_name = _COMPANION_STOPS.get(dest_stop["name"])
             to_dest_comp = set()
             min_comp = 999
             if comp_name and comp_arr and not isinstance(comp_arr, Exception):
                 comp_bus_names = {t.name for t in comp_arr.timings if not t.name.strip().isdigit()}
                 to_dest_comp = comp_bus_names & dest_names
-                min_comp = min(
-                    (_nus_stops_between(bus, comp_name, dest_stop["name"]) or 999)
-                    for bus in to_dest_comp
-                ) if to_dest_comp else 999
+                def _comp_n(bus: str) -> int:
+                    n = _nus_stops_between(bus, comp_name, dest_stop["name"])
+                    if n is None and _dest_comp_name:
+                        n = _nus_stops_between(bus, comp_name, _dest_comp_name)
+                    return n or 999
+                min_comp = min(_comp_n(bus) for bus in to_dest_comp) if to_dest_comp else 999
 
             use_companion = (min_comp < min_direct) and to_dest_comp
             min_conn      = min_comp if use_companion else min_direct
@@ -1112,16 +1125,26 @@ async def _route_on_campus(
                 for t in step2_arr.timings:
                     if not t.name.strip().isdigit():
                         live_step2[t.name] = t
-            conn_buses = sorted(
-                to_dest,
-                key=lambda b: _nus_stops_between(b, step2_name, dest_stop["name"]) or 999,
-            )
+            def _eff_stops(b: str) -> int:
+                n = _nus_stops_between(b, step2_name, dest_stop["name"])
+                if n is None and _dest_comp_name:
+                    n = _nus_stops_between(b, step2_name, _dest_comp_name)
+                return n or 999
+
+            conn_buses = sorted(to_dest, key=_eff_stops)
             lines.append(f"*② {step2_stop['caption']} → {dest_stop['caption']}*")
             for bus_name in conn_buses:
                 td  = live_step2.get(bus_name)
                 arr = td.arrival_time      if td else "-"
                 nxt = td.next_arrival_time if td else "-"
-                lines.append("  " + _fmt_nus_shuttle(bus_name, step2_stop, dest_stop, arr, nxt))
+                # Alight at the companion of dest if the bus doesn't directly serve dest
+                eff_alight = dest_stop
+                if (_dest_comp_name
+                        and _nus_stops_between(bus_name, step2_name, dest_stop["name"]) is None):
+                    comp_stop = find_stop(_dest_comp_name)
+                    if comp_stop and _nus_stops_between(bus_name, step2_name, _dest_comp_name) is not None:
+                        eff_alight = comp_stop
+                lines.append("  " + _fmt_nus_shuttle(bus_name, step2_stop, eff_alight, arr, nxt))
             lines.append("")
             lines.append(f"[open in Google Maps]({maps_url})")
 
