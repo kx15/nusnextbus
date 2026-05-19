@@ -1258,9 +1258,52 @@ async def _route_on_campus(
                 lines.append(f"[MRT/bus options in Google Maps]({transit_url})")
 
     else:
+        # Check if crossing to the origin's companion stop gives a direct bus (fewer stops than any transfer)
+        _orig_comp_name = _COMPANION_STOPS.get(origin["name"])
+        _orig_comp_stop = find_stop(_orig_comp_name) if _orig_comp_name else None
+        _comp_direct: list[str] = []
+        _comp_min: int = 999
+        if _orig_comp_name:
+            _comp_direct = sorted(
+                bus for bus in _NUS_ROUTES
+                if _nus_stops_between(bus, _orig_comp_name, dest_stop["name"]) is not None
+            )
+            if _comp_direct:
+                _comp_min = min(
+                    _nus_stops_between(bus, _orig_comp_name, dest_stop["name"])
+                    for bus in _comp_direct
+                )
+
         # No direct NUS bus (non-BT): try 1 transfer
         transfers = _find_transfers(origin["name"], dest_stop["name"])
-        if transfers:
+        transfer_min = transfers[0][3] if transfers else 999
+
+        if _comp_direct and _comp_min <= transfer_min:
+            # Crossing road gives a direct or better route
+            _comp_arr = await get_arrivals_async(_orig_comp_name)
+            _live_comp: dict = {}
+            if not isinstance(_comp_arr, Exception):
+                _live_comp = {t.name: t for t in _comp_arr.timings if not t.name.strip().isdigit()}
+            lines.append(f"_cross the road to {_orig_comp_stop['caption']}_")
+            lines.append("")
+            lines.append(f"🚌 *NUS shuttle: {_orig_comp_stop['caption']} → {dest_stop['caption']}*")
+            for _bus in _comp_direct:
+                _t = _live_comp.get(_bus)
+                lines.append("  " + _fmt_nus_shuttle(
+                    _bus, _orig_comp_stop, dest_stop,
+                    _t.arrival_time if _t else "-",
+                    _t.next_arrival_time if _t else "-",
+                ))
+            lines.append("")
+            if not dest_is_exact_stop:
+                walk = await get_directions(dest_stop["lat"], dest_stop["lng"], dest_lat, dest_lng)
+                if not isinstance(walk, Exception) and walk.get("duration"):
+                    lines.append(f"*Walk to destination* — 🚶 {walk['distance']} · {walk['duration']}")
+                    _fmt_steps(lines, walk.get("steps", []))
+                    lines.append("")
+            lines.append(f"[open in Google Maps]({maps_url})")
+
+        elif transfers:
             min_stops = transfers[0][3]
             tied = [t for t in transfers if t[3] == min_stops]
 
