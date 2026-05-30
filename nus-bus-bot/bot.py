@@ -105,11 +105,6 @@ def _direction_keyboard(prefix: str, page: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def _go_from_keyboard(page: int = 0) -> InlineKeyboardMarkup:
-    base = _direction_keyboard("go_from", page)
-    location_row = [InlineKeyboardButton("📍 Use my location", callback_data="go_use_location")]
-    return InlineKeyboardMarkup([location_row] + list(base.inline_keyboard))
-
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -605,9 +600,13 @@ async def go_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return ConversationHandler.END
 
     await update.message.reply_text(
-        "🗺 *Route planner*\n\nWhere are you coming *from*?\nTap a stop, type a location, or share 📍 👇",
+        "🗺 *Route planner*\n\nWhere are you coming *from*?\nTap a stop or type a location 👇",
         parse_mode="Markdown",
-        reply_markup=_go_from_keyboard(),
+        reply_markup=_direction_keyboard("go_from"),
+    )
+    await update.message.reply_text(
+        "or share your location 📍",
+        reply_markup=_location_keyboard(),
     )
     return GO_FROM
 
@@ -617,17 +616,10 @@ async def go_got_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.callback_query.answer()
         data = update.callback_query.data
 
-        if data == "go_use_location":
-            await update.callback_query.message.reply_text(
-                "share your location 📍",
-                reply_markup=_location_keyboard(),
-            )
-            return GO_FROM
-
         if "_page:" in data:
             page = int(data.split("_page:")[1])
             await update.callback_query.edit_message_reply_markup(
-                reply_markup=_go_from_keyboard(page)
+                reply_markup=_direction_keyboard("go_from", page)
             )
             return GO_FROM
 
@@ -1879,7 +1871,7 @@ def main() -> None:
         entry_points=[CommandHandler(["go", "plan", "direction", "destination"], go_start)],
         states={
             GO_FROM: [
-                CallbackQueryHandler(go_got_from, pattern=r"^go_from|^go_use_location"),
+                CallbackQueryHandler(go_got_from, pattern=r"^go_from"),
                 MessageHandler(filters.LOCATION, go_got_from),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, go_got_from),
             ],
