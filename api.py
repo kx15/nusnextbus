@@ -1,9 +1,12 @@
 import asyncio
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import httpx
+
+_SGT = timezone(timedelta(hours=8))
 
 
 @dataclass
@@ -24,15 +27,62 @@ class BusStopArrivals:
 
 
 def _resolve_eta(shuttle: dict, field: str, etas_idx: int) -> str:
-    """Return arrival time string, falling back to _etas[idx].eta when field is '-'."""
+    """Return arrival time string (minutes), falling back to _etas when field is '-'.
+
+    _etas only contains the first 5 scheduled trips of the day; after those pass we
+    extrapolate using the headway inferred from the interval between those entries.
+    """
     val = shuttle.get(field, "-")
-    if val in ("-", "") and shuttle.get("_etas"):
-        etas = shuttle["_etas"]
-        if len(etas) > etas_idx:
+    if val not in ("-", ""):
+        return val
+    etas = shuttle.get("_etas") or []
+    if not etas:
+        return val
+
+    now = datetime.now(_SGT)
+
+    # Parse ts (absolute SGT scheduled times) from every _etas entry
+    scheduled = []
+    for entry in etas:
+        ts = entry.get("ts")
+        if ts:
+            try:
+                scheduled.append(datetime.fromisoformat(ts).replace(tzinfo=_SGT))
+            except Exception:
+                pass
+
+    if not scheduled:
+        # No ts — fall back to eta (precomputed, potentially stale)
+        if etas_idx < len(etas):
             eta = etas[etas_idx].get("eta")
-            if eta is not None:
-                return str(eta)
-    return val
+            return str(eta) if eta is not None else val
+        return val
+
+    scheduled.sort()
+
+    # Estimate headway from the gaps between consecutive scheduled entries
+    if len(scheduled) >= 2:
+        gaps = [(scheduled[i + 1] - scheduled[i]).total_seconds() for i in range(len(scheduled) - 1)]
+        headway = timedelta(seconds=round(sum(gaps) / len(gaps)))
+    else:
+        headway = timedelta(0)
+
+    # If the last known trip is still in the future, just use the scheduled list
+    if scheduled[-1] >= now:
+        future = [t for t in scheduled if t >= now]
+    elif headway.total_seconds() > 0:
+        # Extrapolate forward from the last known trip using the inferred headway
+        elapsed = (now - scheduled[-1]).total_seconds()
+        cycles = int(elapsed / headway.total_seconds())
+        future = [scheduled[-1] + headway * (cycles + 1 + i) for i in range(etas_idx + 2)]
+    else:
+        return val
+
+    if etas_idx >= len(future):
+        return val
+
+    mins = round((future[etas_idx] - now).total_seconds() / 60)
+    return "Arr" if mins <= 0 else str(mins)
 
 
 def _parse_shuttles(shuttles: list) -> list[ShuttleTiming]:
