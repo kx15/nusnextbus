@@ -217,14 +217,15 @@ def format_all(results: list[Optional[BusStopArrivals]]) -> list[str]:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🚌 *NUS NextBus*\n\n"
-        "no more standing at the stop praying fr\n\n"
-        "• /all — every bus on campus rn\n"
-        "• /arrivals `<stop>` — check a stop (e.g. `/arrivals CLB`)\n"
-        "• /go `<from> to <dest>` — route planner e.g. `/go CLB to UTOWN`\n"
-        "• /bus `<service>` — NUS bus route e.g. `/bus A1`\n"
-        "• /nearby — stops close to you 📍\n"
-        "• /fav — your usual stops ⭐\n"
-        "• /help — what is this app",
+        "*Check arrivals*\n"
+        "• /arrivals — pick a stop and see live bus times\n"
+        "• /all — every stop at a glance\n\n"
+        "*Get directions*\n"
+        "• /go `CLB to UTOWN` — instant route between any two stops or buildings\n"
+        "• /go — tap to pick stops or share your location\n\n"
+        "*Other*\n"
+        "• /bus `A1` — see a bus route and schedule\n"
+        "• /fav — your saved stops ⭐",
         parse_mode="Markdown",
     )
 
@@ -1850,14 +1851,12 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
-        BotCommand("start",    "What is this app"),
-        BotCommand("all",      "All bus arrivals"),
-        BotCommand("arrivals", "Select stop to get arrival time"),
-        BotCommand("go",        "Route planner — /go CLB to UTOWN or pick stops"),
-        BotCommand("bus",       "NUS bus route e.g. /bus A1"),
-        BotCommand("nearby",    "Find stops near you 📍"),
-        BotCommand("fav",       "Your favourite stops"),
-        BotCommand("help",      "Show this message"),
+        BotCommand("arrivals", "Live bus times at a stop"),
+        BotCommand("go",       "Route planner — /go CLB to UTOWN"),
+        BotCommand("all",      "All stops at a glance"),
+        BotCommand("bus",      "Bus route & schedule — /bus A1"),
+        BotCommand("fav",      "Your saved stops ⭐"),
+        BotCommand("help",     "How to use this bot"),
     ])
 
 
