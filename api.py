@@ -67,22 +67,38 @@ def _resolve_eta(shuttle: dict, field: str, etas_idx: int) -> str:
     else:
         headway = timedelta(0)
 
-    # If the last known trip is still in the future, just use the scheduled list
-    if scheduled[-1] >= now:
-        future = [t for t in scheduled if t >= now]
+    # Grace window: include a trip that passed up to this many minutes ago —
+    # it may be running late and still en route.
+    hw_mins = headway.total_seconds() / 60
+    tolerance_mins = max(5, round(hw_mins / 4)) if hw_mins > 0 else 5
+
+    arrivals: list[int] = []
+    elapsed_to_last = (now - scheduled[-1]).total_seconds()
+
+    if elapsed_to_last < 0:
+        # Some scheduled entries are still in the future — use the list directly
+        for t in scheduled:
+            mins = round((t - now).total_seconds() / 60)
+            if mins >= -tolerance_mins:
+                arrivals.append(max(mins, 0))
     elif headway.total_seconds() > 0:
-        # Extrapolate forward from the last known trip using the inferred headway
-        elapsed = (now - scheduled[-1]).total_seconds()
-        cycles = int(elapsed / headway.total_seconds())
-        future = [scheduled[-1] + headway * (cycles + 1 + i) for i in range(etas_idx + 2)]
+        # All known entries are past; extrapolate forward.
+        # Start from the current cycle (may be running late within the grace window).
+        total_cycles = int(elapsed_to_last / headway.total_seconds())
+        for offset in range(total_cycles, total_cycles + etas_idx + 3):
+            t = scheduled[-1] + headway * offset
+            mins = round((t - now).total_seconds() / 60)
+            if mins >= -tolerance_mins:
+                arrivals.append(max(mins, 0))
     else:
         return val
 
-    if etas_idx >= len(future):
-        return val
+    arrivals.sort()
 
-    mins = round((future[etas_idx] - now).total_seconds() / 60)
-    return "Arr" if mins <= 0 else str(mins)
+    if etas_idx < len(arrivals):
+        m = arrivals[etas_idx]
+        return "Arr" if m == 0 else str(m)
+    return val
 
 
 def _parse_shuttles(shuttles: list) -> list[ShuttleTiming]:
