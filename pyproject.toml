@@ -1,0 +1,22 @@
+[project]
+name = "nus-bus-bot"
+version = "0.1.0"
+description = "NUS NextBus Telegram bot — live shuttle arrivals and campus route planning"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F = pyflakes+pycodestyle, I = isort, UP = pyupgrade, B = bugbear
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "E501",   # long lines: the codebase uses aligned columns intentionally
+    "B905",   # zip() strict=: adding it changes runtime semantics; review case-by-case
+    "E741",   # ambiguous var names (l/I/O): pre-existing single-letter locals
+]

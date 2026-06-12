@@ -1,5 +1,4 @@
 import math
-from typing import Optional
 
 # Coordinates sourced from NUS NextBus API /BusStops endpoint (authoritative)
 STOPS = [
@@ -42,7 +41,7 @@ _SKIP_WORDS = {"NUS", "THE", "OF", "AT", "IN", "AND", "A", "AN",
                "NATIONAL", "UNIVERSITY", "SINGAPORE"}
 
 
-def find_stop(query: str) -> Optional[dict]:
+def find_stop(query: str) -> dict | None:
     q = query.strip().upper()
 
     # 1. Exact name match

@@ -1,10 +1,13 @@
+import asyncio
 import html as _html
+import logging
 import math
 import os
 import re
-from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_html(text: str) -> str:
@@ -92,7 +95,7 @@ def _extract_transit_steps(leg: dict) -> list:
     return steps
 
 
-async def _call_directions(origin: str, destination: str, mode: str, api_key: str) -> Optional[dict]:
+async def _call_directions(origin: str, destination: str, mode: str, api_key: str) -> dict | None:
     """Raw Directions API call. Returns parsed leg dict or None."""
     try:
         async with httpx.AsyncClient() as client:
@@ -106,7 +109,8 @@ async def _call_directions(origin: str, destination: str, mode: str, api_key: st
         if data.get("status") != "OK" or not data.get("routes"):
             return None
         return data["routes"][0]["legs"][0]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Directions API call failed (%s → %s, %s): %s", origin, destination, mode, exc)
         return None
 
 
@@ -180,7 +184,7 @@ async def get_transit_to_stop(
     }
 
 
-async def _geocode_query(address: str, bounds: str, api_key: str) -> Optional[tuple[float, float]]:
+async def _geocode_query(address: str, bounds: str, api_key: str) -> tuple[float, float] | None:
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -194,11 +198,12 @@ async def _geocode_query(address: str, bounds: str, api_key: str) -> Optional[tu
             return None
         loc = data["results"][0]["geometry"]["location"]
         return loc["lat"], loc["lng"]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Geocode API call failed (%s): %s", address, exc)
         return None
 
 
-async def _places_search(query: str, api_key: str) -> Optional[tuple[float, float]]:
+async def _places_search(query: str, api_key: str) -> tuple[float, float] | None:
     """Places Text Search — better than Geocoding for named POIs like LT28, COM1."""
     try:
         async with httpx.AsyncClient() as client:
@@ -213,7 +218,8 @@ async def _places_search(query: str, api_key: str) -> Optional[tuple[float, floa
             return None
         loc = data["results"][0]["geometry"]["location"]
         return loc["lat"], loc["lng"]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Places search failed (%s): %s", query, exc)
         return None
 
 
@@ -233,37 +239,36 @@ def _building_code_expansions(query: str) -> list[str]:
          "as6"  → ["AS 6 NUS Singapore"]
          "e3a"  → ["Engineering Block E3A NUS Singapore"]
     """
-    import re as _re
     q = query.strip().upper()
     exps: list[str] = []
 
-    m = _re.match(r'^LT(\d+[A-Z]?)$', q)
+    m = re.match(r'^LT(\d+[A-Z]?)$', q)
     if m:
         exps += [f"Lecture Theatre {m.group(1)} NUS Singapore",
                  f"LT {m.group(1)} NUS Singapore"]
         return exps
 
-    m = _re.match(r'^E(\d+[A-Z]?)$', q)
+    m = re.match(r'^E(\d+[A-Z]?)$', q)
     if m:
         exps += [f"NUS Engineering Block E{m.group(1)} Singapore",
                  f"E {m.group(1)} NUS Singapore"]
         return exps
 
-    m = _re.match(r'^S(\d+[A-Z]?)$', q)
+    m = re.match(r'^S(\d+[A-Z]?)$', q)
     if m:
         exps += [f"NUS Science Block S{m.group(1)} Singapore",
                  f"S {m.group(1)} NUS Singapore"]
         return exps
 
     # Auditorium N → UTown (numbered NUS auditoriums are in UTown)
-    m = _re.match(r'^AUDITORIUM\s*(\d+[A-Z]?)$', q)
+    m = re.match(r'^AUDITORIUM\s*(\d+[A-Z]?)$', q)
     if m:
         exps += [f"UTown Auditorium {m.group(1)} NUS Singapore",
                  f"Auditorium {m.group(1)} University Town NUS Singapore"]
         return exps
 
     # Generic: letters + digits (e.g. AS6, COM1)
-    m = _re.match(r'^([A-Z]+)(\d+[A-Z]?)$', q)
+    m = re.match(r'^([A-Z]+)(\d+[A-Z]?)$', q)
     if m:
         exps.append(f"{m.group(1)} {m.group(2)} NUS Singapore")
 
@@ -272,7 +277,7 @@ def _building_code_expansions(query: str) -> list[str]:
 
 async def geocode_with_candidates(
     query: str,
-) -> tuple[Optional[tuple[float, float]], list[dict]]:
+) -> tuple[tuple[float, float] | None, list[dict]]:
     """
     Resolve a query to (best_lat_lng, candidates).
     candidates is a non-empty list of {"lat","lng","label"} dicts only when
@@ -283,11 +288,12 @@ async def geocode_with_candidates(
     if not api_key:
         return None, []
 
-    sg     = await _geocode_query(f"{query}, Singapore",      _SG_BOUNDS,  api_key)
-    nus    = await _geocode_query(f"{query} NUS, Singapore",  _NUS_BOUNDS, api_key)
-    places = await _places_search(f"{query} NUS Singapore", api_key)
-
-    import re as _re
+    # These three lookups are independent — run them concurrently.
+    sg, nus, places = await asyncio.gather(
+        _geocode_query(f"{query}, Singapore",     _SG_BOUNDS,  api_key),
+        _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key),
+        _places_search(f"{query} NUS Singapore", api_key),
+    )
 
     # Try building-code / keyword expansions first — they are MORE specific than the
     # generic "X NUS" query and may correct wrong hits (e.g. "auditorium 3 NUS" → UHALL).
@@ -301,7 +307,7 @@ async def geocode_with_candidates(
     off_campus = sg if sg and not _on_campus(*sg) else None
 
     # Building codes (LT24, AS6, E3A, COM1 …) are unambiguously NUS — no disambiguation
-    is_building_code = bool(_re.match(r'^[A-Za-z]{1,4}\d+[A-Za-z]?$', query.strip()))
+    is_building_code = bool(re.match(r'^[A-Za-z]{1,4}\d+[A-Za-z]?$', query.strip()))
 
     if on_campus and off_campus and not is_building_code:
         dist = haversine_m(on_campus[0], on_campus[1], off_campus[0], off_campus[1])
@@ -313,44 +319,3 @@ async def geocode_with_candidates(
 
     best = on_campus or sg or nus or places
     return best, []
-
-
-async def geocode_sg(query: str) -> Optional[tuple[float, float]]:
-    """
-    Resolve a free-text location to (lat, lng).
-
-    Strategy:
-    1. Singapore-wide geocoding — if the result is ON campus, accept immediately.
-    2. NUS-biased geocoding — if stage 1 returned nothing or an off-campus result,
-       try again with 'NUS' appended and campus bounds. Accept if on campus.
-    3. Places Text Search — for abbreviations / POI codes (LT28, COM1, Saga College).
-    4. Fall back to the off-campus stage-1 result if nothing better was found
-       (so off-campus destinations like Orchard MRT still work).
-    """
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
-    if not api_key:
-        return None
-
-    sg_result = await _geocode_query(f"{query}, Singapore", _SG_BOUNDS, api_key)
-    if sg_result and _on_campus(*sg_result):
-        return sg_result  # On-campus hit — done
-
-    # Try building-code / keyword expansions FIRST — they're more specific than
-    # the generic "X NUS, Singapore" query (which can return wrong campus buildings).
-    # e.g. "Auditorium 3 NUS" → UHALL (wrong); "UTown Auditorium 3 NUS" → correct.
-    for alt in _building_code_expansions(query):
-        r = await _geocode_query(alt, _NUS_BOUNDS, api_key)
-        if r and _on_campus(*r):
-            return r
-
-    # Stage-1 returned off-campus (or nothing). Try generic NUS search.
-    nus_result = await _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key)
-    if nus_result and _on_campus(*nus_result):
-        return nus_result
-
-    places_result = await _places_search(f"{query} NUS Singapore", api_key)
-    if places_result and _on_campus(*places_result):
-        return places_result
-
-    # Nothing on campus found — accept off-campus stage-1 result if it exists
-    return sg_result or nus_result or places_result

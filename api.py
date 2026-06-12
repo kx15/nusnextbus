@@ -1,8 +1,7 @@
 import asyncio
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -14,8 +13,8 @@ class ShuttleTiming:
     name: str
     arrival_time: str
     next_arrival_time: str
-    arrival_veh_plate: Optional[str] = None
-    next_arrival_veh_plate: Optional[str] = None
+    arrival_veh_plate: str | None = None
+    next_arrival_veh_plate: str | None = None
 
 
 @dataclass
@@ -114,30 +113,12 @@ def _parse_shuttles(shuttles: list) -> list[ShuttleTiming]:
     ]
 
 
-def get_arrivals(stop_name: str) -> BusStopArrivals:
-    api_url = os.environ["NEXTBUS_API_URL"].rstrip("/")
-    auth = os.environ["NEXTBUS_BASIC_AUTH"]
-    url = f"{api_url}/ShuttleService?busstopname={stop_name}"
-    headers = {"Authorization": f"Basic {auth}"}
-    with httpx.Client() as client:
-        resp = client.get(url, headers=headers, timeout=10.0)
-        resp.raise_for_status()
-        data = resp.json()
-    result = data["ShuttleServiceResult"]
-    return BusStopArrivals(
-        stop_name=result["name"],
-        stop_caption=result["caption"],
-        last_updated=result["TimeStamp"],
-        timings=_parse_shuttles(result.get("shuttles", [])),
-    )
-
-
 async def _fetch_stop(
     client: httpx.AsyncClient,
     stop_name: str,
     headers: dict,
     api_url: str,
-) -> Optional[BusStopArrivals]:
+) -> BusStopArrivals | None:
     url = f"{api_url}/ShuttleService?busstopname={stop_name}"
     try:
         resp = await client.get(url, headers=headers, timeout=10.0)
@@ -163,7 +144,7 @@ async def get_arrivals_async(stop_name: str) -> BusStopArrivals:
     return result
 
 
-async def get_all_arrivals(stop_names: list[str]) -> list[Optional[BusStopArrivals]]:
+async def get_all_arrivals(stop_names: list[str]) -> list[BusStopArrivals | None]:
     api_url = os.environ["NEXTBUS_API_URL"].rstrip("/")
     headers = {"Authorization": f"Basic {os.environ['NEXTBUS_BASIC_AUTH']}"}
     async with httpx.AsyncClient() as client:
