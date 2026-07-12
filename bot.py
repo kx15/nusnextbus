@@ -406,6 +406,31 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_reply_markup(
             reply_markup=_arrival_keyboard(user_id, stop_name, with_back=had_back)
         )
+    elif data.startswith("go_orig_candidates:"):
+        # One-shot "/go X to Y" with ambiguous origin: user picked which origin.
+        await query.answer()
+        _, _, idx_str = data.partition(":")
+        idx = int(idx_str)
+        candidates = context.user_data.pop("go_orig_candidates", [])
+        pending = context.user_data.pop("go_pending_dest", None)
+        if not candidates or idx >= len(candidates) or pending is None:
+            await query.edit_message_text("session expired, please try again")
+            return
+        c = candidates[idx]
+        o_lat, o_lng, o_label = c["lat"], c["lng"], c["label"]
+        near = nearby_stops(o_lat, o_lng, radius_m=800)
+        o_stop = near[0] if near else None
+        if pending["cands"]:
+            # Destination was ambiguous too — chain into the destination picker
+            context.user_data["go_pending_origin"] = {"stop": o_stop, "lat": o_lat, "lng": o_lng, "label": o_label}
+            await query.edit_message_text(f"📍 From: *{escape_md(o_label)}*", parse_mode="Markdown")
+            await _ask_which_location(query.message, context, pending["cands"], "go_dest_candidates")
+            return
+        await query.edit_message_text(f"📍 got it — routing from *{escape_md(o_label)}*", parse_mode="Markdown")
+        await _run_plan(query.message, o_stop, o_lat, o_lng, o_label,
+                        pending["stop"], pending["lat"], pending["lng"],
+                        pending["label"], pending["is_exact"])
+
     elif data.startswith("go_dest_candidates:"):
         await query.answer()
         _, _, idx_str = data.partition(":")
@@ -554,7 +579,7 @@ async def go_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         o_query = text[:idx].strip()
         d_query = text[idx + 4:].strip()
         if o_query and d_query:
-            o_stop, o_lat, o_lng, o_label, _, _ = await _resolve_with_candidates(o_query)
+            o_stop, o_lat, o_lng, o_label, _, o_cands = await _resolve_with_candidates(o_query)
             d_stop, d_lat, d_lng, d_label, d_is_exact, d_cands = await _resolve_with_candidates(d_query)
             if o_lat is None:
                 await update.message.reply_text(f"couldn't find origin: *{escape_md(o_query)}* 😭", parse_mode="Markdown")
@@ -562,7 +587,15 @@ async def go_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if d_lat is None:
                 await update.message.reply_text(f"couldn't find destination: *{escape_md(d_query)}* 😭", parse_mode="Markdown")
                 return ConversationHandler.END
-            if d_cands:
+            if o_cands:
+                # Ambiguous origin: park the (possibly also ambiguous) destination
+                # and ask about the origin first; button_callback chains the rest.
+                context.user_data["go_pending_dest"] = {
+                    "stop": d_stop, "lat": d_lat, "lng": d_lng,
+                    "label": d_label, "is_exact": d_is_exact, "cands": d_cands,
+                }
+                await _ask_which_location(update.message, context, o_cands, "go_orig_candidates")
+            elif d_cands:
                 context.user_data["go_pending_origin"] = {"stop": o_stop, "lat": o_lat, "lng": o_lng, "label": o_label}
                 await _ask_which_location(update.message, context, d_cands, "go_dest_candidates")
             else:
@@ -592,6 +625,28 @@ async def go_got_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 reply_markup=_direction_keyboard("go_from", page)
             )
             return GO_FROM
+
+        if data.startswith("go_from_candidates:"):
+            idx = int(data.split(":", 1)[1])
+            candidates = context.user_data.pop("go_from_candidates", [])
+            if not candidates or idx >= len(candidates):
+                await update.callback_query.edit_message_text("session expired, try /go again")
+                return ConversationHandler.END
+            c = candidates[idx]
+            near = nearby_stops(c["lat"], c["lng"], radius_m=800)
+            origin = near[0] if near else None
+            context.user_data.update({
+                "go_o_stop": origin,
+                "go_o_lat": c["lat"],
+                "go_o_lng": c["lng"],
+                "go_o_label": c["label"],
+            })
+            await update.callback_query.edit_message_text(
+                f"📍 From: *{escape_md(c['label'])}*\n\nWhere are you going *to*?\nTap a stop or type any location 👇",
+                parse_mode="Markdown",
+                reply_markup=_direction_keyboard("go_to"),
+            )
+            return GO_TO
 
         stop_name = data.split(":", 1)[1]
         stop = find_stop(stop_name)
@@ -630,12 +685,18 @@ async def go_got_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     else:
         query = update.message.text.strip()
-        o_stop, o_lat, o_lng, o_label, _, _ = await _resolve_with_candidates(query)
+        o_stop, o_lat, o_lng, o_label, _, o_cands = await _resolve_with_candidates(query)
         if o_lat is None:
             await update.message.reply_text(
                 f"couldn't find *{escape_md(query)}* 😭\ntry again or tap a stop above",
                 parse_mode="Markdown",
             )
+            return GO_FROM
+        if o_cands:
+            # Ambiguous origin (e.g. "mbs" → a campus guess vs Marina Bay Sands):
+            # ask, same as the destination flow. The buttons match ^go_from so
+            # they stay inside this conversation state.
+            await _ask_which_location(update.message, context, o_cands, "go_from_candidates")
             return GO_FROM
         context.user_data.update({
             "go_o_stop": o_stop,
@@ -802,7 +863,8 @@ async def go_got_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def go_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    for k in ("go_o_stop", "go_o_lat", "go_o_lng", "go_o_label", "go_pending_origin"):
+    for k in ("go_o_stop", "go_o_lat", "go_o_lng", "go_o_label", "go_pending_origin",
+              "go_pending_dest", "go_from_candidates", "go_orig_candidates", "go_dest_candidates"):
         context.user_data.pop(k, None)
     await update.message.reply_text("cancelled 👍", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
