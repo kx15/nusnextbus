@@ -2,3 +2,10 @@
 .env
 __pycache__
 *.pyc
+*.db
+.git
+.github
+tests
+.pytest_cache
+.ruff_cache
+requirements-dev.txt

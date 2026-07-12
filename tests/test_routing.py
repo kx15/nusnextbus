@@ -61,7 +61,8 @@ class TestBestDestStop:
 
 class TestSchedule:
     def test_first_last_today_independent_values(self):
-        # _bus_first_last depends on weekday; assert the static schedule table instead.
+        # Day-dependent formatting is covered via _bus_schedule_lines; assert the
+        # static schedule table here.
         assert _BUS_SCHEDULE["K"]["sun_ph"] is None
         assert _BUS_SCHEDULE["P"]["mon_fri"] == ("08:20", "17:25")
         assert _BUS_SCHEDULE["A1"]["mon_sat"] == ("07:15", "23:00")

@@ -83,9 +83,11 @@ GOLDEN = {
         "",
         "[open in Google Maps](https://www.google.com/maps/dir/?api=1&origin=Prince%20George%27s%20Park%20NUS%20Singapore&destination=1.303876,103.774621&travelmode=walking)",
     ],
+    # Step ① must be a bus that actually travels KR-MRT → KV (only K does);
+    # previously the alphabetically-first live bus (A1, which skips KV) was shown.
     ("KR-MRT", "OTH"): [
         "*① Kent Ridge MRT → Kent Vale*",
-        "  🚌 *A1*  3 min | Next: 10 min",
+        "  🚌 *K* · 8 stops  2 min | Next: 9 min",
         "",
         "*② Kent Vale → Oei Tiong Ham Building (Bus P)*",
         "  🚌 *P* · 2 stops  4 min | Next: 11 min",

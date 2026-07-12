@@ -117,8 +117,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PAGE_SIZE = 10
-
 
 def escape_md(text: str) -> str:
     """Escape Telegram legacy-Markdown specials in user-derived text.
@@ -144,11 +142,17 @@ def format_arrivals(arrivals: BusStopArrivals) -> str:
     if not shuttles:
         lines.append("no buses rn... start walking bestie 💀")
     else:
-        # Merge multiple vehicle entries for the same service into one row
+        # Merge multiple vehicle entries for the same service into one row.
+        # The API sometimes returns one entry per vehicle; when the first entry
+        # has no "next" timing, the second vehicle's arrival is the next bus.
         merged: dict[str, tuple[str, str]] = {}
         for t in shuttles:
             if t.name not in merged:
                 merged[t.name] = (t.arrival_time, t.next_arrival_time)
+            else:
+                first, nxt = merged[t.name]
+                if nxt in ("-", "") and t.arrival_time not in ("-", ""):
+                    merged[t.name] = (first, t.arrival_time)
         for name, (first, nxt) in merged.items():
             lines.append(
                 f"\U0001f68c *{name}*: {_fmt_time(first)}"
@@ -171,28 +175,6 @@ def _arrival_keyboard(user_id: int, stop_name: str, with_back: bool = True) -> I
     if with_back:
         rows.append([InlineKeyboardButton("⬅ Back to stops", callback_data="page:0")])
     return InlineKeyboardMarkup(rows)
-
-
-def stops_keyboard(page: int) -> InlineKeyboardMarkup:
-    start = page * PAGE_SIZE
-    page_stops = STOPS[start : start + PAGE_SIZE]
-    buttons = [
-        [
-            InlineKeyboardButton(
-                f"{s['name']} — {s['caption']}",
-                callback_data=f"stop:{s['name']}",
-            )
-        ]
-        for s in page_stops
-    ]
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"page:{page - 1}"))
-    if start + PAGE_SIZE < len(STOPS):
-        nav.append(InlineKeyboardButton("Next ➡", callback_data=f"page:{page + 1}"))
-    if nav:
-        buttons.append(nav)
-    return InlineKeyboardMarkup(buttons)
 
 
 def format_all(results: list[BusStopArrivals | None]) -> list[str]:
@@ -369,10 +351,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=_direction_keyboard("stop", page),
         )
     elif data.startswith("page:"):
+        # "Back to stops" — show the same picker /stops and /arrivals use
         await query.answer()
-        page = int(data.split(":", 1)[1])
-        await query.edit_message_reply_markup(
-            reply_markup=stops_keyboard(page),
+        await query.edit_message_text(
+            "Select a bus stop:",
+            reply_markup=_direction_keyboard("stop"),
         )
     elif data.startswith("stop:"):
         await query.answer()
@@ -413,7 +396,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_id = query.from_user.id
         added = toggle_favourite(user_id, stop_name)
         await query.answer("Added to favourites! ⭐" if added else "Removed from favourites.")
-        await query.edit_message_reply_markup(reply_markup=_arrival_keyboard(user_id, stop_name))
+        # Preserve whether the message had a "Back to stops" row (/arrivals replies don't)
+        markup = query.message.reply_markup if query.message else None
+        had_back = any(
+            btn.callback_data == "page:0"
+            for row in (markup.inline_keyboard if markup else [])
+            for btn in row
+        )
+        await query.edit_message_reply_markup(
+            reply_markup=_arrival_keyboard(user_id, stop_name, with_back=had_back)
+        )
     elif data.startswith("go_dest_candidates:"):
         await query.answer()
         _, _, idx_str = data.partition(":")
@@ -440,11 +432,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     elif data.startswith("bus:"):
         service = data.split(":", 1)[1]
-        await query.answer()
         route = _NUS_ROUTES.get(service)
         if not route:
+            # A callback query can only be answered once — show the alert directly
             await query.answer(f"Route not found for {service}", show_alert=True)
             return
+        await query.answer()
         lines = [f"🚌 *Bus {service} — Route*\n"]
         sched_lines = _bus_schedule_lines(service)
         if sched_lines:
@@ -697,35 +690,6 @@ def _bus_schedule_lines(service: str) -> list[str]:
     return lines
 
 
-def _bus_first_last(service: str) -> tuple[str | None, str | None]:
-    """Return (first_bus, last_bus) for today. Returns ("no_service", None) when no service today."""
-    sched = _BUS_SCHEDULE.get(service)
-    if not sched:
-        return None, None
-    dow = datetime.now(timezone(timedelta(hours=8))).weekday()  # 0=Mon … 5=Sat, 6=Sun
-    if dow == 6:  # Sunday / PH
-        if "sun_ph" in sched:
-            times = sched["sun_ph"]
-            if times is None:
-                return "no_service", None
-        else:
-            times = sched.get("weekend")
-    elif dow == 5:  # Saturday
-        if "saturday" in sched:
-            times = sched["saturday"]
-            if times is None:
-                return "no_service", None
-        else:
-            times = sched.get("mon_sat") or sched.get("weekday")
-    else:  # Mon–Fri
-        times = (sched.get("mon_fri")
-                 or sched.get("mon_sat")
-                 or sched.get("weekday"))
-    if times is None:
-        return None, None
-    return times
-
-
 async def bus_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         names = sorted(_NUS_ROUTES.keys())
@@ -825,10 +789,13 @@ async def go_got_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
             return GO_TO
         if d_cands:
-            context.user_data.update({"go_o_stop": o_stop, "go_o_lat": o_lat,
-                                       "go_o_lng": o_lng, "go_o_label": o_label})
+            # The candidate buttons are handled by button_callback (outside this
+            # conversation), which reads the origin from go_pending_origin.
+            context.user_data["go_pending_origin"] = {
+                "stop": o_stop, "lat": o_lat, "lng": o_lng, "label": o_label,
+            }
             await _ask_which_location(update.message, context, d_cands, "go_dest_candidates")
-            return GO_TO
+            return ConversationHandler.END
         await _run_plan(update.message, o_stop, o_lat, o_lng, o_label,
                         d_stop, d_lat, d_lng, d_label, d_is_exact)
         return ConversationHandler.END

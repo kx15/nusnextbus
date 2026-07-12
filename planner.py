@@ -288,18 +288,19 @@ async def geocode_with_candidates(
     if not api_key:
         return None, []
 
-    # These three lookups are independent — run them concurrently.
-    sg, nus, places = await asyncio.gather(
+    # All lookups are independent — run them concurrently.
+    expansions = _building_code_expansions(query)
+    sg, nus, places, *alt_results = await asyncio.gather(
         _geocode_query(f"{query}, Singapore",     _SG_BOUNDS,  api_key),
         _geocode_query(f"{query} NUS, Singapore", _NUS_BOUNDS, api_key),
         _places_search(f"{query} NUS Singapore", api_key),
+        *[_geocode_query(alt, _NUS_BOUNDS, api_key) for alt in expansions],
     )
 
-    # Try building-code / keyword expansions first — they are MORE specific than the
+    # Building-code / keyword expansions win — they are MORE specific than the
     # generic "X NUS" query and may correct wrong hits (e.g. "auditorium 3 NUS" → UHALL).
     # If an expansion finds an on-campus location, return it immediately (no ambiguity).
-    for alt in _building_code_expansions(query):
-        r = await _geocode_query(alt, _NUS_BOUNDS, api_key)
+    for r in alt_results:
         if r and _on_campus(*r):
             return r, []  # specific expansion → trusted, skip disambiguation
 

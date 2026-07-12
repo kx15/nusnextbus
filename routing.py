@@ -488,7 +488,11 @@ async def _route_on_campus(
                 if hub_name == origin["name"]:   # origin IS the hub — already handled above
                     continue
                 hub_names = {t.name for t in hub_arr.timings if not t.name.strip().isdigit()}
-                to_hub    = origin_names & hub_names
+                # Only buses that travel origin→hub in the forward direction qualify
+                to_hub = {
+                    bus for bus in (origin_names & hub_names)
+                    if _nus_stops_between(bus, origin["name"], hub_name) is not None
+                }
                 # Verify P travels hub→dest in forward direction
                 if (not to_hub or "P" not in hub_names
                         or _nus_stops_between("P", hub_name, dest_stop["name"]) is None):
@@ -498,7 +502,8 @@ async def _route_on_campus(
                 if not p_hub_timing:
                     continue
 
-                step1 = sorted(to_hub)[0]
+                # Fewest stops to the hub; bus name breaks ties deterministically
+                step1 = min(to_hub, key=lambda b: (_nus_stops_between(b, origin["name"], hub_name), b))
                 step1_timing = next((t for t in origin_arrivals.timings if t.name == step1), None)
                 if step1_timing:
                     lines.append(f"*① {origin['caption']} → {hub_stop['caption']}*")

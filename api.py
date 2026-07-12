@@ -1,11 +1,25 @@
 import asyncio
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 _SGT = timezone(timedelta(hours=8))
+
+# One shared client so concurrent per-stop fetches reuse connections
+# instead of paying a TCP+TLS handshake per call.
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=10.0)
+    return _client
 
 
 @dataclass
@@ -130,15 +144,16 @@ async def _fetch_stop(
             last_updated=result["TimeStamp"],
             timings=_parse_shuttles(result.get("shuttles", [])),
         )
-    except Exception:
+    except Exception as exc:
+        # An expired NEXTBUS_BASIC_AUTH would otherwise look identical to "no buses"
+        logger.warning("NextBus fetch failed for %s: %s", stop_name, exc)
         return None
 
 
 async def get_arrivals_async(stop_name: str) -> BusStopArrivals:
     api_url = os.environ["NEXTBUS_API_URL"].rstrip("/")
     headers = {"Authorization": f"Basic {os.environ['NEXTBUS_BASIC_AUTH']}"}
-    async with httpx.AsyncClient() as client:
-        result = await _fetch_stop(client, stop_name, headers, api_url)
+    result = await _fetch_stop(_get_client(), stop_name, headers, api_url)
     if result is None:
         raise RuntimeError(f"Failed to fetch arrivals for {stop_name}")
     return result
@@ -147,7 +162,7 @@ async def get_arrivals_async(stop_name: str) -> BusStopArrivals:
 async def get_all_arrivals(stop_names: list[str]) -> list[BusStopArrivals | None]:
     api_url = os.environ["NEXTBUS_API_URL"].rstrip("/")
     headers = {"Authorization": f"Basic {os.environ['NEXTBUS_BASIC_AUTH']}"}
-    async with httpx.AsyncClient() as client:
-        return list(
-            await asyncio.gather(*[_fetch_stop(client, name, headers, api_url) for name in stop_names])
-        )
+    client = _get_client()
+    return list(
+        await asyncio.gather(*[_fetch_stop(client, name, headers, api_url) for name in stop_names])
+    )
