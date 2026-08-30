@@ -208,7 +208,8 @@ def format_all(results: list[BusStopArrivals | None]) -> list[str]:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "🚌 *NUS NextBus*\n\n"
+        "🚌 *NUS NextBus*\n"
+        "_no more standing at the stop praying fr_\n\n"
         "*Check arrivals*\n"
         "• /arrivals — pick a stop and see live bus times\n"
         "• /all — every stop at a glance\n\n"
