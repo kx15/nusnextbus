@@ -32,6 +32,8 @@ def _fmt_time(mins: str) -> str:
         return "🏃‍♂️RUN"
     try:
         m = int(mins)
+        if m < 0:
+            return "–"
         if m > 30:
             eta = datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=m)
             return f"~{eta.strftime('%H:%M')}"

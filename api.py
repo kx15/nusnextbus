@@ -6,9 +6,12 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from stops import LTA_STOP_CODES
+import univus
+from stops import LTA_STOP_CODES, STOPS
 
 logger = logging.getLogger(__name__)
+
+_CAPTIONS = {s["name"]: s["caption"] for s in STOPS}
 
 LTA_URL = "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival"
 
@@ -42,6 +45,7 @@ class BusStopArrivals:
     last_updated: str
     timings: list[ShuttleTiming] = field(default_factory=list)
     public: list[ShuttleTiming] = field(default_factory=list)
+    source: str = "nextbus"
 
 
 def _lta_minutes(bus: dict | None) -> str:
@@ -87,51 +91,44 @@ async def lta_diagnostics(stop_name: str = "CLB") -> list[str]:
     return lines
 
 
+def _describe_shuttles(result: dict) -> list[str]:
+    shuttles = [s for s in result.get("shuttles", []) if not str(s.get("name", "")).strip().isdigit()]
+    if not shuttles:
+        return ["  no ISB services returned"]
+    lines = [f"  fields: {', '.join(sorted(shuttles[0]))}"]
+    for s in shuttles:
+        live = s.get("arrivalTime", "-")
+        if live not in ("-", ""):
+            plate = s.get("arrivalTime_veh_plate") or "no plate"
+            lines.append(f"  {s.get('name')}: LIVE {live} ({plate}), next {s.get('nextArrivalTime', '-')}")
+        else:
+            est = _resolve_eta(s, "arrivalTime", 0)
+            lines.append(f"  {s.get('name')}: no live time, " + (f"bot estimates {est}" if est not in ("-", "") else "bot shows –"))
+    return lines
+
+
 async def isb_diagnostics(stop_names: tuple[str, ...] = ("KR-MRT", "CLB")) -> list[str]:
-    """Report, per stop and service, whether NUS NextBus gave a live time or the bot estimated one."""
+    """Compare uNivUS (the official app's feed) with the legacy NextBus API, per stop and service."""
     api_url = os.environ.get("NEXTBUS_API_URL", "").rstrip("/")
     auth = os.environ.get("NEXTBUS_BASIC_AUTH", "")
-    if not api_url or not auth:
-        return [f"NEXTBUS_API_URL: {'SET' if api_url else 'NOT SET'}",
-                f"NEXTBUS_BASIC_AUTH: {'SET' if auth else 'NOT SET'}"]
     lines = [f"checked {datetime.now(_SGT).strftime('%H:%M:%S')}"]
     for stop in stop_names:
-        lines.append("")
+        lines += ["", f"== {stop}"]
         try:
-            resp = await _get_client().get(
-                f"{api_url}/ShuttleService",
-                params={"busstopname": stop},
-                headers={"Authorization": f"Basic {auth}"},
-            )
+            result = await univus.fetch_shuttle_service(stop, use_breaker=False)
+            lines.append(f"uNivUS: OK, timestamp {result.get('TimeStamp', '?')}")
+            lines += _describe_shuttles(result)
         except Exception as exc:
-            lines.append(f"{stop}: error {type(exc).__name__}: {exc}")
+            lines.append(f"uNivUS: FAILED {type(exc).__name__}: {str(exc)[:150]}")
+        if not api_url or not auth:
+            lines.append("old NextBus: NEXTBUS_API_URL / NEXTBUS_BASIC_AUTH not set")
             continue
-        if not resp.is_success:
-            lines.append(f"{stop}: HTTP {resp.status_code} {resp.text[:120]}")
-            continue
-        result = resp.json().get("ShuttleServiceResult", {})
-        lines.append(f"{stop}: HTTP 200, API timestamp {result.get('TimeStamp', '?')}")
-        shuttles = [s for s in result.get("shuttles", []) if not str(s.get("name", "")).strip().isdigit()]
-        if not shuttles:
-            lines.append("  no ISB services returned")
-        else:
-            etas0 = shuttles[0].get("_etas") or [{}]
-            lines.append(f"  fields: {', '.join(sorted(shuttles[0]))}")
-            lines.append(f"  _etas fields: {', '.join(sorted(etas0[0])) or '-'}")
-        for s in shuttles:
-            live = s.get("arrivalTime", "-")
-            if live not in ("-", ""):
-                plate = s.get("arrivalTime_veh_plate") or "no plate"
-                lines.append(f"  {s['name']}: LIVE {live} ({plate}), next {s.get('nextArrivalTime', '-')}")
-            else:
-                est = _resolve_eta(s, "arrivalTime", 0)
-                lines.append(f"  {s['name']}: no live time, " + (f"bot shows estimate {est}" if est not in ("-", "") else "bot shows –"))
-            etas = s.get("_etas") or []
-            raw = ", ".join(
-                f"{e.get('eta')}m@{str(e.get('ts', ''))[11:16]}{'/' + e['plate'] if e.get('plate') else ''}"
-                for e in etas[:4]
-            )
-            lines.append(f"    raw arr={s.get('arrivalTime')} next={s.get('nextArrivalTime')} _etas[{len(etas)}]: {raw or '-'}")
+        try:
+            result = await _fetch_legacy(_get_client(), stop, {"Authorization": f"Basic {auth}"}, api_url)
+            lines.append(f"old NextBus: OK, timestamp {result.get('TimeStamp', '?')}")
+            lines += _describe_shuttles(result)
+        except Exception as exc:
+            lines.append(f"old NextBus: FAILED {type(exc).__name__}: {str(exc)[:150]}")
     return lines
 
 
@@ -249,26 +246,39 @@ def _parse_shuttles(shuttles: list) -> list[ShuttleTiming]:
     ]
 
 
+async def _fetch_legacy(client: httpx.AsyncClient, stop_name: str, headers: dict, api_url: str) -> dict:
+    resp = await client.get(f"{api_url}/ShuttleService", params={"busstopname": stop_name}, headers=headers, timeout=10.0)
+    resp.raise_for_status()
+    return resp.json()["ShuttleServiceResult"]
+
+
+async def _fetch_shuttles(client: httpx.AsyncClient, stop_name: str, headers: dict, api_url: str) -> tuple[dict, str]:
+    """uNivUS (what the official app shows) first; the legacy NextBus API if it fails."""
+    try:
+        return await univus.fetch_shuttle_service(stop_name), "univus"
+    except Exception as exc:
+        logger.warning("uNivUS fetch failed for %s, falling back to NextBus: %s", stop_name, exc)
+    return await _fetch_legacy(client, stop_name, headers, api_url), "nextbus"
+
+
 async def _fetch_stop(
     client: httpx.AsyncClient,
     stop_name: str,
     headers: dict,
     api_url: str,
 ) -> BusStopArrivals | None:
-    url = f"{api_url}/ShuttleService?busstopname={stop_name}"
     try:
-        resp, public = await asyncio.gather(
-            client.get(url, headers=headers, timeout=10.0),
+        (result, source), public = await asyncio.gather(
+            _fetch_shuttles(client, stop_name, headers, api_url),
             _fetch_public(client, stop_name),
         )
-        resp.raise_for_status()
-        result = resp.json()["ShuttleServiceResult"]
         return BusStopArrivals(
-            stop_name=result["name"],
-            stop_caption=result["caption"],
-            last_updated=result["TimeStamp"],
+            stop_name=result.get("name") or stop_name,
+            stop_caption=result.get("caption") or _CAPTIONS.get(stop_name, stop_name),
+            last_updated=str(result.get("TimeStamp", "")),
             timings=_parse_shuttles(result.get("shuttles", [])),
             public=public,
+            source=source,
         )
     except Exception as exc:
         # An expired NEXTBUS_BASIC_AUTH would otherwise look identical to "no buses"
