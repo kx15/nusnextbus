@@ -75,3 +75,32 @@ async def test_fetch_public_without_key_skips(monkeypatch):
 
     monkeypatch.delenv("LTA_ACCOUNT_KEY", raising=False)
     assert await api._fetch_public(None, "CLB") == []
+
+
+async def test_lta_diagnostics_missing_key(monkeypatch):
+    import api
+
+    monkeypatch.delenv("LTA_ACCOUNT_KEY", raising=False)
+    monkeypatch.setenv("LTA_API_KEY", "x")
+    out = "\n".join(await api.lta_diagnostics())
+    assert "LTA_ACCOUNT_KEY: NOT SET" in out
+    assert "LTA_API_KEY" in out
+
+
+async def test_lta_diagnostics_strips_quotes_and_reports_rejection(monkeypatch):
+    import httpx
+
+    import api
+
+    seen = {}
+
+    def handler(req):
+        seen["key"] = req.headers["AccountKey"]
+        return httpx.Response(401, text="Unauthorized")
+
+    monkeypatch.setenv("LTA_ACCOUNT_KEY", ' "secretkey" ')
+    monkeypatch.setattr(api, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    out = "\n".join(await api.lta_diagnostics())
+    assert seen["key"] == "secretkey"
+    assert "had quotes/spaces" in out and "HTTP 401" in out
+    assert "secretkey" not in out

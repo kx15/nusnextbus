@@ -52,9 +52,44 @@ def _lta_minutes(bus: dict | None) -> str:
     return "Arr" if mins <= 0 else str(mins)
 
 
+def _lta_key() -> str:
+    # Tolerate quotes/whitespace pasted into the hosting dashboard along with the key
+    return os.environ.get("LTA_ACCOUNT_KEY", "").strip().strip("\"'").strip()
+
+
+async def lta_diagnostics(stop_name: str = "CLB") -> list[str]:
+    """Report LTA config and a live call result, without revealing the key."""
+    raw = os.environ.get("LTA_ACCOUNT_KEY")
+    key = _lta_key()
+    similar = sorted(k for k in os.environ if "LTA" in k.upper() or "ACCOUNT" in k.upper())
+    lines = [
+        f"LTA_ACCOUNT_KEY: {'SET' if raw is not None else 'NOT SET'}"
+        + (f" ({len(key)} chars{', had quotes/spaces' if raw != key else ''})" if raw is not None else ""),
+        f"similar env vars: {', '.join(similar) or 'none'}",
+    ]
+    code = LTA_STOP_CODES.get(stop_name)
+    if not key or not code:
+        return lines
+    try:
+        resp = await _get_client().get(
+            LTA_URL,
+            params={"BusStopCode": code},
+            headers={"AccountKey": key, "accept": "application/json"},
+        )
+        lines.append(f"LTA {stop_name} ({code}): HTTP {resp.status_code}")
+        if resp.is_success:
+            services = resp.json().get("Services", [])
+            lines.append(f"services: {', '.join(s['ServiceNo'] for s in services) or 'none right now'}")
+        else:
+            lines.append(f"body: {resp.text[:200]}")
+    except Exception as exc:
+        lines.append(f"LTA call error: {type(exc).__name__}: {exc}")
+    return lines
+
+
 async def _fetch_public(client: httpx.AsyncClient, stop_name: str) -> list[ShuttleTiming]:
     code = LTA_STOP_CODES.get(stop_name)
-    key = os.environ.get("LTA_ACCOUNT_KEY")
+    key = _lta_key()
     if not code or not key:
         return []
     try:
