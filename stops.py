@@ -23,6 +23,18 @@ LTA_STOP_CODES: dict[str, str] = {
     "CG":           "41029",
 }
 
+# Destinations whose best stop isn't what the planner would pick on its own.
+# Matched by name in the destination text, or by a point within radius_m.
+DEST_OVERRIDES = [
+    {
+        "keywords": ("nus enterprise", "i-cube", "icube", "i3 building", "21 heng mui keng"),
+        "lat": 1.292430, "lng": 103.775520, "radius_m": 60,  # I3 Building, 21 Heng Mui Keng Terrace
+        "label": "NUS Enterprise",
+        "stop": "HSSML-OPP",
+        "tip": "💡 Alight at Opp HSSML and take the stairs up to NUS Enterprise, faster than TCOMS.",
+    },
+]
+
 ADVISORIES: dict[str, str] = {
     "TCOMS": "💡 For NUS Enterprise, alight at Opp HSSML instead.",
 }
@@ -92,6 +104,22 @@ def find_stop(query: str) -> dict | None:
                 return stop
 
     return None
+
+
+def dest_override(label: str, lat: float | None, lng: float | None) -> dict | None:
+    text = (label or "").lower()
+    for o in DEST_OVERRIDES:
+        if any(k in text for k in o["keywords"]):
+            return o
+        if lat is not None and lng is not None and _distance_m(lat, lng, o["lat"], o["lng"]) <= o["radius_m"]:
+            return o
+    return None
+
+
+def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lng2 - lng1) / 2) ** 2
+    return 6_371_000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def nearby_stops(lat: float, lng: float, radius_m: int = 500) -> list[dict]:
