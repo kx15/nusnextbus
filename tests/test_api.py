@@ -132,6 +132,9 @@ async def test_isb_diagnostics_marks_live_vs_estimated(monkeypatch):
     out = "\n".join(await api.isb_diagnostics(("CLB", "UTOWN")))
     assert "A1: LIVE 3 (PD123A), next 12" in out
     assert "D2: no live time, bot shows estimate 4" in out
+    assert "raw arr=- next=- _etas[5]: 0m@" in out
+    assert "_etas fields: eta, ts" not in out  # first shuttle (A1) has no _etas
+    assert "fields: arrivalTime, arrivalTime_veh_plate, name, nextArrivalTime" in out
     assert "95" not in out
     assert "UTOWN: HTTP 401" in out
 

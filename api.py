@@ -87,7 +87,7 @@ async def lta_diagnostics(stop_name: str = "CLB") -> list[str]:
     return lines
 
 
-async def isb_diagnostics(stop_names: tuple[str, ...] = ("CLB", "KR-MRT", "UTOWN")) -> list[str]:
+async def isb_diagnostics(stop_names: tuple[str, ...] = ("KR-MRT", "CLB")) -> list[str]:
     """Report, per stop and service, whether NUS NextBus gave a live time or the bot estimated one."""
     api_url = os.environ.get("NEXTBUS_API_URL", "").rstrip("/")
     auth = os.environ.get("NEXTBUS_BASIC_AUTH", "")
@@ -114,6 +114,10 @@ async def isb_diagnostics(stop_names: tuple[str, ...] = ("CLB", "KR-MRT", "UTOWN
         shuttles = [s for s in result.get("shuttles", []) if not str(s.get("name", "")).strip().isdigit()]
         if not shuttles:
             lines.append("  no ISB services returned")
+        else:
+            etas0 = shuttles[0].get("_etas") or [{}]
+            lines.append(f"  fields: {', '.join(sorted(shuttles[0]))}")
+            lines.append(f"  _etas fields: {', '.join(sorted(etas0[0])) or '-'}")
         for s in shuttles:
             live = s.get("arrivalTime", "-")
             if live not in ("-", ""):
@@ -122,6 +126,12 @@ async def isb_diagnostics(stop_names: tuple[str, ...] = ("CLB", "KR-MRT", "UTOWN
             else:
                 est = _resolve_eta(s, "arrivalTime", 0)
                 lines.append(f"  {s['name']}: no live time, " + (f"bot shows estimate {est}" if est not in ("-", "") else "bot shows –"))
+            etas = s.get("_etas") or []
+            raw = ", ".join(
+                f"{e.get('eta')}m@{str(e.get('ts', ''))[11:16]}{'/' + e['plate'] if e.get('plate') else ''}"
+                for e in etas[:4]
+            )
+            lines.append(f"    raw arr={s.get('arrivalTime')} next={s.get('nextArrivalTime')} _etas[{len(etas)}]: {raw or '-'}")
     return lines
 
 

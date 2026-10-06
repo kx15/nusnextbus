@@ -924,7 +924,9 @@ async def debuglta_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def debugisb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Hidden diagnostic: live vs estimated NUS shuttle timings at a few busy stops."""
-    await update.message.reply_text("\n".join(await isb_diagnostics()))
+    text = "\n".join(await isb_diagnostics())
+    for i in range(0, len(text), 4000):
+        await update.message.reply_text(text[i:i + 4000])
 
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
