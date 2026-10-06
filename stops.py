@@ -1,5 +1,32 @@
 import math
 
+# Nearest LTA public bus stop (matched by coordinates, all within 50m)
+LTA_STOP_CODES: dict[str, str] = {
+    "KRB":          "16009",
+    "LT27":         "18301",
+    "S17":          "18309",
+    "KR-MRT":       "18331",
+    "KR-MRT-OPP":   "18339",
+    "UHALL":        "18311",
+    "UHALL-OPP":    "18319",
+    "UHC":          "18329",
+    "UHC-OPP":      "18321",
+    "YIH":          "16171",
+    "YIH-OPP":      "16179",
+    "CLB":          "16181",
+    "IT":           "16189",
+    "MUSEUM":       "16161",
+    "RAFFLES":      "16169",
+    "JP-SCH-16151": "16151",
+    "SDE3-OPP":     "16141",
+    "BG-MRT":       "41021",
+    "CG":           "41029",
+}
+
+ADVISORIES: dict[str, str] = {
+    "TCOMS": "💡 For NUS Enterprise, alight at Opp HSSML instead.",
+}
+
 # Coordinates sourced from NUS NextBus API /BusStops endpoint (authoritative)
 STOPS = [
     {"name": "AS5",          "caption": "AS 5",                        "lat": 1.293619, "lng": 103.771475},
