@@ -104,3 +104,44 @@ async def test_lta_diagnostics_strips_quotes_and_reports_rejection(monkeypatch):
     assert seen["key"] == "secretkey"
     assert "had quotes/spaces" in out and "HTTP 401" in out
     assert "secretkey" not in out
+
+
+async def test_isb_diagnostics_marks_live_vs_estimated(monkeypatch):
+    import httpx
+
+    import api
+
+    fut = [{"eta": i, "ts": _ts(4 + i * 10)} for i in range(5)]
+
+    def handler(req):
+        stop = req.url.params["busstopname"]
+        if stop == "UTOWN":
+            return httpx.Response(401, text="Unauthorized")
+        return httpx.Response(200, json={"ShuttleServiceResult": {
+            "TimeStamp": "2026-10-06 21:00:00",
+            "shuttles": [
+                {"name": "A1", "arrivalTime": "3", "nextArrivalTime": "12", "arrivalTime_veh_plate": "PD123A"},
+                {"name": "D2", "arrivalTime": "-", "nextArrivalTime": "-", "_etas": fut},
+                {"name": "95", "arrivalTime": "2", "nextArrivalTime": "9"},
+            ],
+        }})
+
+    monkeypatch.setenv("NEXTBUS_API_URL", "https://example.test")
+    monkeypatch.setenv("NEXTBUS_BASIC_AUTH", "x")
+    monkeypatch.setattr(api, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    out = "\n".join(await api.isb_diagnostics(("CLB", "UTOWN")))
+    assert "A1: LIVE 3 (PD123A), next 12" in out
+    assert "D2: no live time, bot shows estimate 4" in out
+    assert "raw arr=- next=- _etas[5]: 0m@" in out
+    assert "_etas fields: eta, ts" not in out  # first shuttle (A1) has no _etas
+    assert "fields: arrivalTime, arrivalTime_veh_plate, name, nextArrivalTime" in out
+    assert "95" not in out
+    assert "UTOWN: HTTP 401" in out
+
+
+async def test_isb_diagnostics_reports_missing_config(monkeypatch):
+    import api
+
+    monkeypatch.delenv("NEXTBUS_BASIC_AUTH", raising=False)
+    monkeypatch.setenv("NEXTBUS_API_URL", "https://example.test")
+    assert "NEXTBUS_BASIC_AUTH: NOT SET" in await api.isb_diagnostics()
