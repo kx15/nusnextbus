@@ -22,7 +22,7 @@ from telegram.ext import (
     filters,
 )
 
-from api import BusStopArrivals, get_all_arrivals, get_arrivals_async, lta_diagnostics
+from api import BusStopArrivals, get_all_arrivals, get_arrivals_async, isb_diagnostics, lta_diagnostics
 from favourites import get_favourites, init_db, is_favourite, toggle_favourite
 from planner import geocode_with_candidates, get_directions, get_transit_to_stop
 from routes import _BUKIT_TIMAH_STOPS, _BUS_SCHEDULE, _NUS_ROUTES
@@ -922,6 +922,11 @@ async def debuglta_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text("\n".join(await lta_diagnostics()))
 
 
+async def debugisb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hidden diagnostic: live vs estimated NUS shuttle timings at a few busy stops."""
+    await update.message.reply_text("\n".join(await isb_diagnostics()))
+
+
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cmd = update.message.text.split()[0] if update.message.text else "that"
     await update.message.reply_text(
@@ -981,6 +986,7 @@ def main() -> None:
     app.add_handler(CommandHandler("bus",       bus_command))
     app.add_handler(CommandHandler("debugplan", debugplan_command))
     app.add_handler(CommandHandler("debuglta",  debuglta_command))
+    app.add_handler(CommandHandler("debugisb",  debugisb_command))
     app.add_handler(nearby_handler)
     app.add_handler(go_handler)
     app.add_handler(CommandHandler("fav",       fav_command))

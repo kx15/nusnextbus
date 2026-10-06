@@ -87,6 +87,44 @@ async def lta_diagnostics(stop_name: str = "CLB") -> list[str]:
     return lines
 
 
+async def isb_diagnostics(stop_names: tuple[str, ...] = ("CLB", "KR-MRT", "UTOWN")) -> list[str]:
+    """Report, per stop and service, whether NUS NextBus gave a live time or the bot estimated one."""
+    api_url = os.environ.get("NEXTBUS_API_URL", "").rstrip("/")
+    auth = os.environ.get("NEXTBUS_BASIC_AUTH", "")
+    if not api_url or not auth:
+        return [f"NEXTBUS_API_URL: {'SET' if api_url else 'NOT SET'}",
+                f"NEXTBUS_BASIC_AUTH: {'SET' if auth else 'NOT SET'}"]
+    lines = [f"checked {datetime.now(_SGT).strftime('%H:%M:%S')}"]
+    for stop in stop_names:
+        lines.append("")
+        try:
+            resp = await _get_client().get(
+                f"{api_url}/ShuttleService",
+                params={"busstopname": stop},
+                headers={"Authorization": f"Basic {auth}"},
+            )
+        except Exception as exc:
+            lines.append(f"{stop}: error {type(exc).__name__}: {exc}")
+            continue
+        if not resp.is_success:
+            lines.append(f"{stop}: HTTP {resp.status_code} {resp.text[:120]}")
+            continue
+        result = resp.json().get("ShuttleServiceResult", {})
+        lines.append(f"{stop}: HTTP 200, API timestamp {result.get('TimeStamp', '?')}")
+        shuttles = [s for s in result.get("shuttles", []) if not str(s.get("name", "")).strip().isdigit()]
+        if not shuttles:
+            lines.append("  no ISB services returned")
+        for s in shuttles:
+            live = s.get("arrivalTime", "-")
+            if live not in ("-", ""):
+                plate = s.get("arrivalTime_veh_plate") or "no plate"
+                lines.append(f"  {s['name']}: LIVE {live} ({plate}), next {s.get('nextArrivalTime', '-')}")
+            else:
+                est = _resolve_eta(s, "arrivalTime", 0)
+                lines.append(f"  {s['name']}: no live time, " + (f"bot shows estimate {est}" if est not in ("-", "") else "bot shows –"))
+    return lines
+
+
 async def _fetch_public(client: httpx.AsyncClient, stop_name: str) -> list[ShuttleTiming]:
     code = LTA_STOP_CODES.get(stop_name)
     key = _lta_key()
