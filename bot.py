@@ -33,7 +33,7 @@ from routing import (
     _route_offcampus_to_campus,
     _route_on_campus,
 )
-from stops import ADVISORIES, STOPS, find_stop, nearby_stops
+from stops import ADVISORIES, STOPS, dest_override, find_stop, nearby_stops
 
 load_dotenv()
 
@@ -547,6 +547,11 @@ async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng
         )
         return
 
+    override = None if d_is_exact else dest_override(d_label, d_lat, d_lng)
+    if override:
+        d_stop = find_stop(override["stop"])
+        d_lat, d_lng = override["lat"], override["lng"]
+
     msg = await message.reply_text("planning your route one sec 👀")
     try:
         origin_loc = (o_lat, o_lng)
@@ -557,7 +562,7 @@ async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng
             # and pick the one reachable in fewest bus stops from the effective origin.
             # For BT campus origins (OTH/CG/BG-MRT), the journey always transfers
             # through KR-MRT — use that as the effective origin for optimisation.
-            if not d_is_exact:
+            if not d_is_exact and not override:
                 candidates = nearby_stops(d_lat, d_lng, radius_m=200)
                 if len(candidates) > 1:
                     eff_origin = (
@@ -578,6 +583,8 @@ async def _run_plan(message, o_stop, o_lat, o_lng, o_label, d_stop, d_lat, d_lng
             directions = await get_directions(o_lat, o_lng, d_lat, d_lng)
             _append_directions_block(lines, directions)
 
+        if override:
+            lines.append(f"\n{override['tip']}")
         logger.info("message lines: %d  preview: %s", len(lines), lines[1] if len(lines) > 1 else "")
         await msg.edit_text("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
     except Exception:

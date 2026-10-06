@@ -70,6 +70,11 @@ def _fmt_nus_shuttle(bus_name: str, board_stop: dict, alight_stop: dict,
     )
 
 
+# A change of bus means a second wait, so a single bus wins unless a transfer
+# route saves more than this many stops (e.g. A2 3 stops beats K 1 + R2 1).
+_TRANSFER_PENALTY_STOPS = 2
+
+
 def _nus_stops_between(bus: str, board: str, alight: str) -> int | None:
     """Return number of stops between board and alight for a given NUS bus, or None."""
     route = _NUS_ROUTES.get(bus, [])
@@ -570,7 +575,7 @@ async def _route_on_campus(
         comp_transfers = _find_transfers(_orig_comp_name, dest_stop["name"]) if _orig_comp_name else []
         comp_transfer_min = comp_transfers[0][3] if comp_transfers else 999
 
-        if _comp_direct and _comp_min <= min(transfer_min, comp_transfer_min):
+        if _comp_direct and _comp_min <= min(transfer_min, comp_transfer_min) + _TRANSFER_PENALTY_STOPS:
             # Crossing road gives a direct or better route
             _comp_arr = await get_arrivals_async(_orig_comp_name)
             _live_comp: dict = {}
