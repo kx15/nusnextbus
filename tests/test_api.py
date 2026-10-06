@@ -41,3 +41,37 @@ def test_grace_window_recent_trip_clamped_to_arr():
     etas = [{"eta": 0, "ts": _ts(-2 + i * 10)} for i in range(5)]
     val = _resolve_eta(_shuttle(etas), "arrivalTime", 0)
     assert val == "Arr" or val.isdigit()
+
+
+async def test_fetch_public_parses_lta(monkeypatch):
+    from datetime import datetime, timedelta
+
+    import httpx
+
+    import api
+
+    now = datetime.now(api._SGT)
+    iso = lambda m: (now + timedelta(minutes=m, seconds=30)).isoformat(timespec="seconds")  # noqa: E731
+    payload = {"Services": [
+        {"ServiceNo": "151", "NextBus": {"EstimatedArrival": iso(4)}, "NextBus2": {"EstimatedArrival": ""}},
+        {"ServiceNo": "95", "NextBus": {"EstimatedArrival": iso(0)}, "NextBus2": {"EstimatedArrival": iso(9)}},
+    ]}
+
+    def handler(req):
+        assert req.headers["AccountKey"] == "k"
+        assert req.url.params["BusStopCode"] == "16181"
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setenv("LTA_ACCOUNT_KEY", "k")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        got = await api._fetch_public(c, "CLB")
+        unmapped = await api._fetch_public(c, "UTOWN")
+    assert [(t.name, t.arrival_time, t.next_arrival_time) for t in got] == [("95", "Arr", "9"), ("151", "4", "-")]
+    assert unmapped == []
+
+
+async def test_fetch_public_without_key_skips(monkeypatch):
+    import api
+
+    monkeypatch.delenv("LTA_ACCOUNT_KEY", raising=False)
+    assert await api._fetch_public(None, "CLB") == []

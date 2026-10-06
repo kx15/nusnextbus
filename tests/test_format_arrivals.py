@@ -28,3 +28,23 @@ def test_public_bus_numbers_filtered_out():
     out = bot.format_arrivals(_arrivals([ShuttleTiming("95", "2", "8")]))
     assert "95" not in out.splitlines()[-1]
     assert "no buses" in out
+
+
+def test_public_buses_shown_in_own_section():
+    a = _arrivals([ShuttleTiming("A1", "3", "10")])
+    a.public = [ShuttleTiming("95", "Arr", "9")]
+    out = bot.format_arrivals(a)
+    assert "🚍 *Public Buses*" in out
+    assert "*95*: " + bot._fmt_time("Arr") + " | Next: 9 min" in out
+    assert "no buses" not in out
+
+
+def test_public_only_stop_is_not_reported_empty():
+    a = _arrivals([])
+    a.public = [ShuttleTiming("151", "4", "-")]
+    assert "no buses" not in bot.format_arrivals(a)
+
+
+def test_tcoms_advisory():
+    a = BusStopArrivals("TCOMS", "TCOMS", "", [ShuttleTiming("A1", "3", "10")])
+    assert "Opp HSSML" in bot.format_arrivals(a)

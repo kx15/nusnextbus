@@ -33,7 +33,7 @@ from routing import (
     _route_offcampus_to_campus,
     _route_on_campus,
 )
-from stops import STOPS, find_stop, nearby_stops
+from stops import ADVISORIES, STOPS, find_stop, nearby_stops
 
 load_dotenv()
 
@@ -139,9 +139,9 @@ def format_arrivals(arrivals: BusStopArrivals) -> str:
         "",
     ]
     shuttles = [t for t in arrivals.timings if not t.name.strip().isdigit()]
-    if not shuttles:
+    if not shuttles and not arrivals.public:
         lines.append("no buses rn... start walking bestie 💀")
-    else:
+    if shuttles:
         # Merge multiple vehicle entries for the same service into one row.
         # The API sometimes returns one entry per vehicle; when the first entry
         # has no "next" timing, the second vehicle's arrival is the next bus.
@@ -158,6 +158,18 @@ def format_arrivals(arrivals: BusStopArrivals) -> str:
                 f"\U0001f68c *{name}*: {_fmt_time(first)}"
                 f" | Next: {_fmt_time(nxt)}"
             )
+    if arrivals.public:
+        if shuttles:
+            lines.append("")
+        lines.append("🚍 *Public Buses*")
+        for t in arrivals.public:
+            lines.append(
+                f"*{t.name}*: {_fmt_time(t.arrival_time)}"
+                f" | Next: {_fmt_time(t.next_arrival_time)}"
+            )
+    advisory = ADVISORIES.get(arrivals.stop_name)
+    if advisory:
+        lines.append(f"\n{advisory}")
     return "\n".join(lines)
 
 
@@ -185,12 +197,12 @@ def format_all(results: list[BusStopArrivals | None]) -> list[str]:
         if arrivals is None:
             continue
         shuttles = [t for t in arrivals.timings if not t.name.strip().isdigit()]
-        if not shuttles:
-            buses = "no service"
-        else:
-            buses = "  ".join(
-                f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in shuttles
-            )
+        parts = []
+        if shuttles:
+            parts.append("  ".join(f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in shuttles))
+        if arrivals.public:
+            parts.append("🚍 " + "  ".join(f"*{t.name}*: {_fmt_time(t.arrival_time)}" for t in arrivals.public))
+        buses = "\n".join(parts) if parts else "no service"
         lines.append(f"`{arrivals.stop_name}` — {arrivals.stop_caption}\n{buses}")
     pages: list[str] = []
     current = header

@@ -6,7 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from stops import LTA_STOP_CODES
+
 logger = logging.getLogger(__name__)
+
+LTA_URL = "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival"
 
 _SGT = timezone(timedelta(hours=8))
 
@@ -37,6 +41,41 @@ class BusStopArrivals:
     stop_caption: str
     last_updated: str
     timings: list[ShuttleTiming] = field(default_factory=list)
+    public: list[ShuttleTiming] = field(default_factory=list)
+
+
+def _lta_minutes(bus: dict | None) -> str:
+    eta = (bus or {}).get("EstimatedArrival")
+    if not eta:
+        return "-"
+    mins = int((datetime.fromisoformat(eta) - datetime.now(_SGT)).total_seconds() // 60)
+    return "Arr" if mins <= 0 else str(mins)
+
+
+async def _fetch_public(client: httpx.AsyncClient, stop_name: str) -> list[ShuttleTiming]:
+    code = LTA_STOP_CODES.get(stop_name)
+    key = os.environ.get("LTA_ACCOUNT_KEY")
+    if not code or not key:
+        return []
+    try:
+        resp = await client.get(
+            LTA_URL,
+            params={"BusStopCode": code},
+            headers={"AccountKey": key, "accept": "application/json"},
+        )
+        resp.raise_for_status()
+        services = resp.json().get("Services", [])
+    except Exception as exc:
+        logger.warning("LTA fetch failed for %s (%s): %s", stop_name, code, exc)
+        return []
+    return [
+        ShuttleTiming(
+            name=s["ServiceNo"],
+            arrival_time=_lta_minutes(s.get("NextBus")),
+            next_arrival_time=_lta_minutes(s.get("NextBus2")),
+        )
+        for s in sorted(services, key=lambda s: (len(s["ServiceNo"]), s["ServiceNo"]))
+    ]
 
 
 def _resolve_eta(shuttle: dict, field: str, etas_idx: int) -> str:
@@ -135,7 +174,10 @@ async def _fetch_stop(
 ) -> BusStopArrivals | None:
     url = f"{api_url}/ShuttleService?busstopname={stop_name}"
     try:
-        resp = await client.get(url, headers=headers, timeout=10.0)
+        resp, public = await asyncio.gather(
+            client.get(url, headers=headers, timeout=10.0),
+            _fetch_public(client, stop_name),
+        )
         resp.raise_for_status()
         result = resp.json()["ShuttleServiceResult"]
         return BusStopArrivals(
@@ -143,6 +185,7 @@ async def _fetch_stop(
             stop_caption=result["caption"],
             last_updated=result["TimeStamp"],
             timings=_parse_shuttles(result.get("shuttles", [])),
+            public=public,
         )
     except Exception as exc:
         # An expired NEXTBUS_BASIC_AUTH would otherwise look identical to "no buses"
